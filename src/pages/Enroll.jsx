@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from 'react'
 import { addScan, upsertUser } from '../lib/store.js'
-import { registerUser } from '../lib/api.js'
 import { useToast } from '../components/Toaster.jsx'
 import Button from '../components/Button.jsx'
 import { useTranslation } from 'react-i18next'
@@ -18,6 +17,7 @@ import scanAnim from '../assets/Fingerprint Scan/animations/fbafd0c6-2dfc-40d3-8
 export default function Enroll() {
   const { t } = useTranslation()
   const { push } = useToast()
+  const notify = (msg, type) => setTimeout(() => push(msg, type), 0)
   const [connected, setConnected] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [progress, setProgress] = useState(0)
@@ -62,7 +62,7 @@ export default function Enroll() {
   const handleConnect = async () => {
     setConnected(true)
     setMessage(t('enroll.msgConnected', 'Scanner connected. Capture 3 samples to enroll.'))
-    push(t('scanner.connected'), 'success')
+    notify(t('scanner.connected'), 'success')
   }
 
   // tiny PRNG for visual seed
@@ -104,7 +104,7 @@ export default function Enroll() {
         if (next >= 100) {
           clearInterval(timerRef.current)
           const sample = {
-            id: `${userId || 'new'}-enroll-${Date.now()}`,
+            id: `${userId || 'new'}-enroll-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
             at: new Date().toISOString().slice(0, 10),
             device: 'OptiScan X2',
             seed: Math.floor(Math.random() * 1e9),
@@ -112,7 +112,7 @@ export default function Enroll() {
           setSamples((arr) => [...arr, sample])
           setMessage(t('enroll.msgCaptured', 'Sample captured'))
           setScanning(false)
-          push(t('enroll.msgCaptured', 'Sample captured'), 'info')
+          notify(t('enroll.msgCaptured', 'Sample captured'), 'info')
         }
         return next
       })
@@ -129,18 +129,15 @@ export default function Enroll() {
     if (!id || !fullName || samples.length < REQUIRED) return
 
     try {
-      await registerUser({ userId: id, name: fullName, samples })
-      // Persist locally after successful API call to keep UI in sync
       const user = upsertUser({ id, name: fullName, enrolled: true })
       samples.forEach((s) => addScan(user.id, s))
-      push(t('enroll.msgSuccess', 'Profile registered successfully'), 'success')
+      notify(t('enroll.msgSuccess', 'Profile registered successfully'), 'success')
       setSamples([])
       setUserId('')
       setName('')
     } catch (err) {
       console.error(err)
-      const details = err?.details ? ` — ${String(err.details).slice(0, 160)}` : ''
-      push(`${t('enroll.msgFailed', 'Registration failed')}${details}`, 'error')
+      notify(t('enroll.msgFailed', 'Registration failed'), 'error')
     }
   }
 
@@ -176,6 +173,7 @@ export default function Enroll() {
               <input className="input input-bordered w-full" value={name} onChange={(e)=>setName(e.target.value)} placeholder="e.g. Jane Smith" />
               <label className="label"><span className="label-text-alt">{t('enroll.fullNameHint', 'Will appear on profile and reports')}</span></label>
             </div>
+            {/* No file upload: local-only demo */}
             <div className="flex flex-wrap gap-3">
               <Button variant="secondary" onClick={handleConnect} disabled={connected} className="min-w-28">{t('scanner.connect')}</Button>
               <Button onClick={captureSample} disabled={!connected || scanning} className="min-w-28">{t('enroll.captureSample', 'Capture Sample')}</Button>
@@ -222,7 +220,7 @@ export default function Enroll() {
             </div>
           )}
           <div className="mt-4">
-            <Button onClick={handleRegister} disabled={!ready}>
+            <Button onClick={handleRegister} disabled={!userId.trim() || !name.trim() || samples.length < REQUIRED}>
               {t('enroll.registerProfile', 'Register Profile')}
             </Button>
           </div>

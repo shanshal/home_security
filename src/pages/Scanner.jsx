@@ -15,6 +15,7 @@ import { useToast } from '../components/Toaster.jsx'
 export default function Scanner() {
   const { t } = useTranslation()
   const { push } = useToast()
+  const notify = (msg, type) => setTimeout(() => push(msg, type), 0)
   const [connected, setConnected] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [scanProgress, setScanProgress] = useState(0)
@@ -26,6 +27,7 @@ export default function Scanner() {
   const [minCert, setMinCert] = useState(70)
   const [selectedId, setSelectedId] = useState('')
   const [scanSeed, setScanSeed] = useState(0)
+  // No external file/API; fully local simulation
   const scanTimer = useRef(null)
   const matchTimer = useRef(null)
   const lottieRef = useRef(null)
@@ -70,10 +72,10 @@ export default function Scanner() {
     try {
       setConnected(true)
       setMessage(t('scanner.msgConnected', 'Scanner connected. You can start scanning'))
-      push(t('scanner.connected'), 'success')
+      notify(t('scanner.connected'), 'success')
     } catch (e) {
       setMessage(t('scanner.msgConnectFailed', 'Failed to connect to scanner'))
-      push(t('common.failed'), 'error')
+      notify(t('common.failed'), 'error')
     }
   }
 
@@ -110,10 +112,8 @@ export default function Scanner() {
 
         if (next >= 100) {
           clearInterval(matchTimer.current)
-          // finalize without asserting a definitive match; present sorted top candidates
           setMessage(t('scanner.msgMatchDone', 'Matching complete. Review top candidates by certainty.'))
           setMatching(false)
-          // no success notification or confetti
         }
         return next
       })
@@ -195,6 +195,8 @@ export default function Scanner() {
                   </div>
                 )}
               </div>
+
+              {/* No file upload: local-only demo */}
 
               <div className="flex items-center gap-4">
                 <div className="radial-progress text-primary" style={{"--value": scanProgress, "--size": '3rem'}} role="progressbar">

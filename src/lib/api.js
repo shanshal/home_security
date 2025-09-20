@@ -1,33 +1,39 @@
 // Lightweight API helper for server calls
 
-const API_BASE = (import.meta?.env?.VITE_API_BASE || 'https://api.yousified.xyz').replace(/\/$/, '')
+// Use VITE_API_BASE when provided. In dev, default to '/api' and proxy via Vite to avoid CORS.
+const API_BASE = (import.meta?.env?.VITE_API_BASE || '/api').replace(/\/$/, '')
 
-export async function registerUser({ userId, name, samples }) {
+// New endpoints (multipart)
+export async function registerFingerprint({ file, username, signal }) {
   const url = `${API_BASE}/register`
-  const payload = { userId, name, samples }
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-
+  const fd = new FormData()
+  fd.append('file', file)
+  fd.append('username', username)
+  const res = await fetch(url, { method: 'POST', body: fd, signal })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     const err = new Error(`Register failed: ${res.status} ${res.statusText}`)
     err.details = text
     throw err
   }
+  // Spec shows 200 OK with no JSON body
+  return true
+}
 
-  // Prefer JSON, but tolerate empty body
-  try {
-    return await res.json()
-  } catch {
-    return null
+export async function matchFingerprint({ file, signal }) {
+  const url = `${API_BASE}/match`
+  const fd = new FormData()
+  fd.append('file', file)
+  const res = await fetch(url, { method: 'POST', body: fd, signal })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    const err = new Error(`Match failed: ${res.status} ${res.statusText}`)
+    err.details = text
+    throw err
   }
+  return await res.json() // { username, score, certainty, matchingTime }
 }
 
 export function getApiBase() {
   return API_BASE
 }
-
