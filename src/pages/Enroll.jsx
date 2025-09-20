@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, useMemo } from 'react'
 import { addScan, upsertUser } from '../lib/store.js'
+import { registerFingerprint } from '../lib/api.js'
 import { useToast } from '../components/Toaster.jsx'
 import Button from '../components/Button.jsx'
 import { useTranslation } from 'react-i18next'
 
-// lazy lottie load reused from Scanner pattern
 let lottiePromise = null
 const getLottie = async () => {
   if (!lottiePromise) {
@@ -24,6 +24,7 @@ export default function Enroll() {
   const [samples, setSamples] = useState([])
   const [name, setName] = useState('')
   const [userId, setUserId] = useState('')
+  const [file, setFile] = useState(null)
   const [message, setMessage] = useState(t('enroll.msgConnect', 'Connect a scanner to enroll'))
   const REQUIRED = 3
   const timerRef = useRef(null)
@@ -65,7 +66,6 @@ export default function Enroll() {
     notify(t('scanner.connected'), 'success')
   }
 
-  // tiny PRNG for visual seed
   const mulberry32 = (seed) => {
     return function() {
       let t = (seed += 0x6D2B79F5)
@@ -129,12 +129,17 @@ export default function Enroll() {
     if (!id || !fullName || samples.length < REQUIRED) return
 
     try {
-      const user = upsertUser({ id, name: fullName, enrolled: true })
-      samples.forEach((s) => addScan(user.id, s))
+      if (file) {
+        await registerFingerprint({ file, username: id, fullName })
+      } else {
+        const user = upsertUser({ id, name: fullName, enrolled: true })
+        samples.forEach((s) => addScan(user.id, s))
+      }
       notify(t('enroll.msgSuccess', 'Profile registered successfully'), 'success')
       setSamples([])
       setUserId('')
       setName('')
+      setFile(null)
     } catch (err) {
       console.error(err)
       notify(t('enroll.msgFailed', 'Registration failed'), 'error')
@@ -150,7 +155,6 @@ export default function Enroll() {
         <span className={`badge ${connected ? 'badge-success' : 'badge-ghost'}`}>{connected ? t('scanner.connected') : t('scanner.disconnected')}</span>
       </div>
 
-      {/* Steps */}
       <div className="w-full">
         <ul className="steps w-full text-xs">
           <li className={`step ${connected ? 'step-primary' : ''}`}>{t('scanner.stepConnect')}</li>
@@ -161,19 +165,22 @@ export default function Enroll() {
 
       <div className="card border border-base-300 bg-base-100">
         <div className="card-body grid gap-8 md:grid-cols-2 items-start">
-          {/* Left: Form */}
           <div className="space-y-4">
             <div className="form-control">
               <label className="label"><span className="label-text p-2">{t('search.userId')}</span></label>
               <input className="input input-bordered w-full" value={userId} onChange={(e)=>setUserId(e.target.value)} placeholder="e.g. User-9001" />
               <label className="label"><span className="label-text-alt">{t('enroll.userIdHint', 'Letters, numbers, and dashes only')}</span></label>
             </div>
-            <div className="form-control">
-              <label className="label"><span className="label-text p-2">{t('enroll.fullName', 'Full Name')}</span></label>
-              <input className="input input-bordered w-full" value={name} onChange={(e)=>setName(e.target.value)} placeholder="e.g. Jane Smith" />
-              <label className="label"><span className="label-text-alt">{t('enroll.fullNameHint', 'Will appear on profile and reports')}</span></label>
-            </div>
-            {/* No file upload: local-only demo */}
+          <div className="form-control">
+            <label className="label"><span className="label-text p-2">{t('enroll.fullName', 'Full Name')}</span></label>
+            <input className="input input-bordered w-full" value={name} onChange={(e)=>setName(e.target.value)} placeholder="e.g. Jane Smith" />
+            <label className="label"><span className="label-text-alt">{t('enroll.fullNameHint', 'Will appear on profile and reports')}</span></label>
+          </div>
+          <div className="form-control">
+            <label className="label"><span className="label-text p-2">Upload Fingerprint</span></label>
+            <input type="file" accept="image/*" className="file-input file-input-bordered w-full" onChange={(e)=>setFile(e.target.files?.[0]||null)} />
+            <label className="label"><span className="label-text-alt">Optional for demo; required for API registration</span></label>
+          </div>
             <div className="flex flex-wrap gap-3">
               <Button variant="secondary" onClick={handleConnect} disabled={connected} className="min-w-28">{t('scanner.connect')}</Button>
               <Button onClick={captureSample} disabled={!connected || scanning} className="min-w-28">{t('enroll.captureSample', 'Capture Sample')}</Button>
@@ -186,7 +193,6 @@ export default function Enroll() {
             </div>
           </div>
 
-          {/* Right: Live preview */}
           <div className="flex flex-col items-center gap-4">
             <div className="aspect-[3/4] w-64 md:w-72 rounded-lg border border-base-300 bg-base-200/60 overflow-hidden relative">
               <div ref={lottieRef} className={`absolute inset-0 ${scanning ? 'opacity-100' : 'opacity-60'} transition-opacity`} />
@@ -196,7 +202,6 @@ export default function Enroll() {
         </div>
       </div>
 
-      {/* Samples list */}
       <div className="card border border-base-300 bg-base-100">
         <div className="card-body">
           <div className="flex items-center justify-between">

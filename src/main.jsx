@@ -5,6 +5,14 @@ import './index.css'
 import App from './App.jsx'
 import './i18n.js'
 
+const savedTheme = (() => {
+  try { return localStorage.getItem('theme') } catch { return null }
+})()
+if (savedTheme) {
+  const html = document.documentElement
+  html.setAttribute('data-theme', savedTheme)
+}
+
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <BrowserRouter>

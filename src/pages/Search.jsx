@@ -1,21 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { getStoredUsers } from '../lib/store.js'
-
-// Mocked database records. Replace with your real API/database.
-const MOCK_USERS = [
-  { id: 'User-0007', name: 'Maria Santos', enrolled: true, lastSeen: '2025-08-04', scans: 12 },
-  { id: 'User-0132', name: 'Omar Khaled', enrolled: true, lastSeen: '2025-09-11', scans: 4 },
-  { id: 'User-0420', name: 'Lina Chen', enrolled: false, lastSeen: '—', scans: 0 },
-  { id: 'User-1024', name: 'John Doe', enrolled: true, lastSeen: '2025-09-18', scans: 27 },
-  { id: 'User-2048', name: 'Jane Roe', enrolled: true, lastSeen: '2025-05-29', scans: 9 },
-  { id: 'User-4096', name: 'Ali Hassan', enrolled: true, lastSeen: '2025-07-13', scans: 2 },
-  { id: 'User-8192', name: 'Sofia N.', enrolled: false, lastSeen: '—', scans: 0 },
-]
+import { secListUsers } from '../lib/api.js'
 
 export default function Search() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const initialQ = searchParams.get('id') || ''
   const [query, setQuery] = useState(initialQ)
@@ -23,7 +13,7 @@ export default function Search() {
   const [results, setResults] = useState([])
   const [error, setError] = useState('')
   const [page, setPage] = useState(1)
-  const pageSize = 5
+  const pageSize = 10
   const debounceRef = useRef(null)
 
   const runSearch = async (q) => {
@@ -36,10 +26,11 @@ export default function Search() {
     setLoading(true)
     await new Promise((r) => setTimeout(r, 400))
     try {
+      const items = await secListUsers()
       const qLower = trimmed.toLowerCase()
-      const dynamicUsers = getStoredUsers()
-      const pool = [...MOCK_USERS, ...dynamicUsers]
-      const filtered = pool.filter((u) => u.id.toLowerCase().includes(qLower))
+      const filtered = (Array.isArray(items) ? items : [])
+        .filter((u) => String(u.id).toLowerCase().includes(qLower) || String(u.name || '').toLowerCase().includes(qLower))
+        .map((u) => ({ id: u.id, name: u.name || String(u.id) }))
       setResults(filtered)
       setPage(1)
       if (filtered.length === 0) setError(t('search.noResults'))
@@ -56,7 +47,6 @@ export default function Search() {
     runSearch(query)
   }
 
-  // Debounce query input
   useEffect(() => {
     setSearchParams(query ? { id: query } : {})
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -68,8 +58,7 @@ export default function Search() {
 
   const summary = useMemo(() => {
     if (results.length === 0) return ''
-    const enrolled = results.filter((r) => r.enrolled).length
-    return `${enrolled}/${results.length} enrolled`
+    return `${results.length} results`
   }, [results])
 
   const totalPages = Math.max(1, Math.ceil(results.length / pageSize))
@@ -128,34 +117,20 @@ export default function Search() {
               <tr>
                 <th>{t('search.thUserId', 'User ID')}</th>
                 <th>{t('search.thName', 'Name')}</th>
-                <th>{t('search.thEnrolled', 'Enrolled')}</th>
-                <th>{t('search.thLastSeen', 'Last Seen')}</th>
-                <th>{t('search.thScans', 'Scans')}</th>
               </tr>
             </thead>
             <tbody>
               {paged.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="text-base-content/60">
+                  <td colSpan={2} className="text-base-content/60">
                     {query.trim() ? t('search.noResults') : t('search.enterId')}
                   </td>
                 </tr>
               ) : (
                 paged.map((u) => (
-                  <tr key={u.id}>
-                    <td className="font-mono text-sm">
-                      <Link to={`/users/${encodeURIComponent(u.id)}`} className="link link-primary">
-                        {u.id}
-                      </Link>
-                    </td>
+                  <tr key={u.id} className="hover cursor-pointer" onClick={() => navigate(`/users/${encodeURIComponent(u.id)}`)}>
+                    <td className="font-mono text-sm">{u.id}</td>
                     <td>{u.name}</td>
-                    <td>
-                      <span className={`badge ${u.enrolled ? 'badge-success' : 'badge-ghost'}`}>
-                        {u.enrolled ? 'Yes' : 'No'}
-                      </span>
-                    </td>
-                    <td>{u.lastSeen}</td>
-                    <td>{u.scans}</td>
                   </tr>
                 ))
               )}

@@ -4,8 +4,6 @@ import { getLocks, getFingerprints, addFingerprint, assignFingerprint, removeFin
 import Button from '../components/Button.jsx'
 import { useToast } from '../components/Toaster.jsx'
 
-// reuse lottie import pattern lazily if available later
-
 export default function Fingerprints() {
   const { t } = useTranslation()
   const { push } = useToast()
@@ -19,7 +17,7 @@ export default function Fingerprints() {
   const [scanning, setScanning] = useState(false)
   const [progress, setProgress] = useState(0)
   const timerRef = useRef(null)
-  const [step, setStep] = useState('capture') // capture -> assign -> done
+  const [step, setStep] = useState('capture')
 
   useEffect(() => () => timerRef.current && clearInterval(timerRef.current), [])
 

@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
-// Lazy-load lottie for smaller initial bundle
 let lottieHomePromise = null
 const getLottieHome = async () => {
   if (!lottieHomePromise) {
@@ -53,7 +52,6 @@ export default function Home() {
           <p className="py-6 text-base-content/70">{t('home.heroDesc')}</p>
           <div className="flex flex-wrap items-center gap-3">
             <button className="btn btn-primary" onClick={() => navigate('/scanner')}>{t('home.openScanner')}</button>
-            <button className="btn btn-ghost" onClick={() => navigate('/about')}>{t('home.learnMore')}</button>
           </div>
           <div className="mt-6 flex flex-wrap items-center gap-4 text-sm">
             <a className="link link-primary" onClick={() => navigate('/enroll')}>{t('home.enrollLink')}</a>

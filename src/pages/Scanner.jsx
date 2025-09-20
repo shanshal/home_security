@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-// Dynamically import lottie to reduce initial bundle size
 let lottiePromise = null
 const getLottie = async () => {
   if (!lottiePromise) {
@@ -11,6 +10,7 @@ const getLottie = async () => {
 import scanAnim from '../assets/Fingerprint Scan/animations/fbafd0c6-2dfc-40d3-8ec2-d0d2c866c641.json'
 import Button from '../components/Button.jsx'
 import { useToast } from '../components/Toaster.jsx'
+import { matchFingerprint } from '../lib/api.js'
 
 export default function Scanner() {
   const { t } = useTranslation()
@@ -27,7 +27,9 @@ export default function Scanner() {
   const [minCert, setMinCert] = useState(70)
   const [selectedId, setSelectedId] = useState('')
   const [scanSeed, setScanSeed] = useState(0)
-  // No external file/API; fully local simulation
+  const [file, setFile] = useState(null)
+  const [fileUrl, setFileUrl] = useState('')
+  const [matchedImage, setMatchedImage] = useState('')
   const scanTimer = useRef(null)
   const matchTimer = useRef(null)
   const lottieRef = useRef(null)
@@ -45,7 +47,6 @@ export default function Scanner() {
     }
   }, [])
 
-  // Initialize/refresh Lottie animation when scanning state changes
   useEffect(() => {
     let cancelled = false
     const init = async () => {
@@ -68,6 +69,13 @@ export default function Scanner() {
     return () => { cancelled = true }
   }, [scanning])
 
+  useEffect(() => {
+    if (fileUrl) URL.revokeObjectURL(fileUrl)
+    if (file) setFileUrl(URL.createObjectURL(file))
+    else setFileUrl('')
+    return () => {}
+  }, [file])
+
   const handleConnect = async () => {
     try {
       setConnected(true)
@@ -79,45 +87,56 @@ export default function Scanner() {
     }
   }
 
-  const startMatching = () => {
+  const startMatching = async () => {
     setMatching(true)
     setMatchProgress(0)
     setMessage(t('scanner.msgMatching', 'Matching captured fingerprint against database…'))
     setResults([])
-
-    const candidates = [
-      'User-0007',
-      'User-0132',
-      'User-0420',
-      'User-1024',
-      'User-2048',
-      'User-4096',
-      'User-8192',
-    ]
-
-    let idx = 0
-    matchTimer.current = setInterval(() => {
-      setMatchProgress((p) => {
-        const step = 6 + Math.random() * 10
-        const next = Math.min(100, p + step)
-
-        if (idx < candidates.length && Math.random() > 0.4) {
-          const name = candidates[idx++]
-          const score = Math.floor(40 + Math.random() * 40)
-          setResults((r) =>
-            [...r, { id: name, score }]
-              .sort((a, b) => b.score - a.score)
-          )
-        }
-
-        if (next >= 100) {
-          clearInterval(matchTimer.current)
-          setMessage(t('scanner.msgMatchDone', 'Matching complete. Review top candidates by certainty.'))
-          setMatching(false)
-        }
-        return next
-      })
-    }, 500)
+    if (file) {
+      try {
+        const res = await matchFingerprint({ file })
+        const scoreRaw = Number(res?.certainty ?? res?.score ?? 0)
+        const pct = scoreRaw <= 1 ? Math.round(scoreRaw * 100) : Math.round(scoreRaw)
+        const id = res?.user?.username || String(res?.user?.id || 'Unknown')
+        setMatchedImage(res?.image || '')
+        setResults([{ id, score: Math.max(0, Math.min(100, pct)) }])
+        setMatchProgress(100)
+        setMessage(t('scanner.msgMatchDone', 'Matching complete. Review top candidates by certainty.'))
+      } catch (e) {
+        notify(t('common.failed'), 'error')
+        setMessage(t('scanner.msgMatchDone', 'Matching complete. Review top candidates by certainty.'))
+      } finally {
+        setMatching(false)
+      }
+    } else {
+      const candidates = [
+        'User-0007',
+        'User-0132',
+        'User-0420',
+        'User-1024',
+        'User-2048',
+        'User-4096',
+        'User-8192',
+      ]
+      let idx = 0
+      matchTimer.current = setInterval(() => {
+        setMatchProgress((p) => {
+          const step = 6 + Math.random() * 10
+          const next = Math.min(100, p + step)
+          if (idx < candidates.length && Math.random() > 0.4) {
+            const name = candidates[idx++]
+            const score = Math.floor(40 + Math.random() * 40)
+            setResults((r) => [...r, { id: name, score }].sort((a, b) => b.score - a.score))
+          }
+          if (next >= 100) {
+            clearInterval(matchTimer.current)
+            setMessage(t('scanner.msgMatchDone', 'Matching complete. Review top candidates by certainty.'))
+            setMatching(false)
+          }
+          return next
+        })
+      }, 500)
+    }
   }
 
   const handleStart = () => {
@@ -183,33 +202,29 @@ export default function Scanner() {
           </div>
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            {/* Left: Capture preview + scan progress */}
             <div className="flex flex-col items-center gap-4">
               <div className="aspect-[3/4] w-64 rounded-lg border border-base-300 bg-base-200/60 overflow-hidden relative">
-                {/* Lottie container (visible during scanning) */}
                 <div ref={lottieRef} className={`absolute inset-0 ${scanning ? 'opacity-100' : 'opacity-0'} transition-opacity`} />
-                {/* Overlay messages */}
                 {!scanning && (
                   <div className="absolute inset-0 flex items-center justify-center text-base-content/50 text-sm">
-                    {captured ? 'Fingerprint captured' : 'Scanner preview'}
+                    {fileUrl ? (
+                      <img src={fileUrl} alt="captured" className="h-full w-full object-contain" />
+                    ) : captured ? 'Fingerprint captured' : 'Scanner preview'}
                   </div>
                 )}
               </div>
-
-              {/* No file upload: local-only demo */}
-
-              <div className="flex items-center gap-4">
-                <div className="radial-progress text-primary" style={{"--value": scanProgress, "--size": '3rem'}} role="progressbar">
-                  {Math.round(scanProgress)}%
-                </div>
-                <progress className="progress progress-primary w-56" value={scanProgress} max="100" />
-              </div>
+          <div className="flex items-center gap-4">
+            <div className="radial-progress text-primary" style={{"--value": scanProgress, "--size": '3rem'}} role="progressbar">
+              {Math.round(scanProgress)}%
             </div>
-
-            {/* Comparison moved out to full-width section below */}
-
-            {/* Right: Database matching visualizer */}
-            <div className="space-y-4">
+            <progress className="progress progress-primary w-56" value={scanProgress} max="100" />
+          </div>
+          <div className="form-control w-full max-w-xs">
+            <div className="label"><span className="label-text">Upload fingerprint</span></div>
+            <input type="file" accept="image/*" className="file-input file-input-bordered" onChange={(e)=>setFile(e.target.files?.[0]||null)} />
+          </div>
+        </div>
+        <div className="space-y-4">
               <div className="rounded-lg border border-base-300 bg-base-200/60 p-4">
                 <div className="mb-2 flex items-center justify-between">
                   <div className="font-medium">{t('scanner.dbMatching')}</div>
@@ -266,7 +281,6 @@ export default function Scanner() {
             </div>
           </div>
 
-          {/* Full-width comparison section for clarity */}
           {selectedId && (
             <div className="rounded-lg border border-base-300 bg-base-100 p-4 max-w-3xl mx-auto w-full">
               <div className="mb-3 flex items-center justify-between">
@@ -277,13 +291,22 @@ export default function Scanner() {
                 <div className="space-y-2">
                   <div className="text-xs text-base-content/60">{t('common.capturedScan')}</div>
                   <div className="rounded-lg border border-base-300 bg-base-200/60 p-3 flex items-center justify-center">
-                    <FingerprintPreview seed={scanSeed || 12345} width={160} height={200} />
+                    {fileUrl ? (
+                      <img src={fileUrl} alt="captured" className="h-48 object-contain" />
+                    ) : (
+                      <FingerprintPreview seed={scanSeed || 12345} width={160} height={200} />
+                    )}
                   </div>
                 </div>
                 <div className="space-y-2">
                   <div className="text-xs text-base-content/60">{t('common.reference')} • {selectedId}</div>
                   <div className="rounded-lg border border-base-300 bg-base-200/60 p-3 flex items-center justify-center">
-                    <FingerprintPreview seed={hashId(selectedId)} width={160} height={200} />
+                    {matchedImage ? (
+                      <img src={matchedImage.startsWith('data:') || matchedImage.startsWith('http') ? matchedImage : `data:image/bmp;base64,${matchedImage}`}
+                           alt="reference" className="h-48 object-contain" />
+                    ) : (
+                      <FingerprintPreview seed={hashId(selectedId)} width={160} height={200} />
+                    )}
                   </div>
                 </div>
               </div>
@@ -327,7 +350,6 @@ export default function Scanner() {
   )
 }
 
-// Tiny deterministic hash to seed the reference preview from an ID
 function hashId(str) {
   let h = 2166136261
   for (let i = 0; i < str.length; i++) {
@@ -337,7 +359,6 @@ function hashId(str) {
   return (h >>> 0) % 1000000000
 }
 
-// Lightweight synthetic fingerprint preview (demo placeholder)
 function FingerprintPreview({ seed, width = 160, height = 200 }) {
   const points = useMemo(() => {
     let t = seed >>> 0

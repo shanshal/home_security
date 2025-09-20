@@ -1,7 +1,7 @@
 @import "tailwindcss";
 @plugin "daisyui";
 @plugin "daisyui" {
-  themes: light --default, dark --prefersdark, nord;
+  themes: light --default, dark --prefersdark, nord, dracula;
 }
 
 @theme {
@@ -16,8 +16,7 @@
 @layer base {
   html, body, #root { height: 100%; }
 }
-
-/* Force non-ghost button text to white; keep ghost readable */
+ 
 @layer components {
   .btn:not(.btn-ghost), .btn:not(.btn-ghost) :where(span, svg, i, strong) { color: #ffffff !important; }
 }

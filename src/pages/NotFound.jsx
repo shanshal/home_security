@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-// Lazy-load lottie
 let lottie404Promise = null
 const getLottie404 = async () => {
   if (!lottie404Promise) {

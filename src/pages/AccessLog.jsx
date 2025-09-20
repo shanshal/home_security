@@ -8,7 +8,7 @@ export default function AccessLog() {
   const [user, setUser] = useState('')
   const [lockId, setLockId] = useState('')
   const [action, setAction] = useState('')
-  const [time, setTime] = useState('all') // all | 24h | 7d
+  const [time, setTime] = useState('all')
   const [tick, setTick] = useState(0)
   const locks = getLocks()
   const locksMap = Object.fromEntries(locks.map((l) => [l.id, l]))

@@ -11,7 +11,6 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (getLocks().length === 0) {
-      // seed defaults
       addLock({ id: 'front-door', name: t('locks.frontDoor') })
       addLock({ id: 'garage', name: t('locks.garage') })
       addLock({ id: 'office', name: t('locks.office') })
