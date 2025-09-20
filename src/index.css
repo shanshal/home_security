@@ -1,0 +1,23 @@
+@import "tailwindcss";
+@plugin "daisyui";
+@plugin "daisyui" {
+  themes: light --default, dark --prefersdark, nord;
+}
+
+@theme {
+  --font-sans: "Noto Sans", ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-arabic: "Noto Sans Arabic", "Noto Sans", ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+}
+
+@layer utilities {
+  .font-arabic { font-family: var(--font-arabic); }
+}
+
+@layer base {
+  html, body, #root { height: 100%; }
+}
+
+/* Force non-ghost button text to white; keep ghost readable */
+@layer components {
+  .btn:not(.btn-ghost), .btn:not(.btn-ghost) :where(span, svg, i, strong) { color: #ffffff !important; }
+}
