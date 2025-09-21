@@ -9,13 +9,11 @@ const getLottie = async () => {
 }
 import scanAnim from '../assets/Fingerprint Scan/animations/fbafd0c6-2dfc-40d3-8ec2-d0d2c866c641.json'
 import Button from '../components/Button.jsx'
-import { useToast } from '../components/Toaster.jsx'
 import { matchFingerprint } from '../lib/api.js'
+import { useWebSocket } from '../lib/useWebSocket.js'
 
 export default function Scanner() {
   const { t } = useTranslation()
-  const { push } = useToast()
-  const notify = (msg, type) => setTimeout(() => push(msg, type), 0)
   const [connected, setConnected] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [scanProgress, setScanProgress] = useState(0)
@@ -30,22 +28,70 @@ export default function Scanner() {
   const [file, setFile] = useState(null)
   const [fileUrl, setFileUrl] = useState('')
   const [matchedImage, setMatchedImage] = useState('')
-  const scanTimer = useRef(null)
-  const matchTimer = useRef(null)
+  const [wsImageSrc, setWsImageSrc] = useState('')
+  const [wsMeta, setWsMeta] = useState({ name: '', format: '', size: 0 })
   const lottieRef = useRef(null)
   const lottieInstance = useRef(null)
+  const SOCKET_URL = useMemo(() => {
+    const s = (import.meta?.env?.VITE_SOCKET_URL || 'ws://100.103.61.128:8765').trim()
+    return /^wss?:\/\//i.test(s) ? s : `ws://${s}`
+  }, [])
+  const { status: wsStatus, lastMessage, error: wsError, reconnect: wsReconnect } = useWebSocket(SOCKET_URL)
   
 
   useEffect(() => {
     return () => {
-      if (scanTimer.current) clearInterval(scanTimer.current)
-      if (matchTimer.current) clearInterval(matchTimer.current)
       if (lottieInstance.current) {
         lottieInstance.current.destroy()
         lottieInstance.current = null
       }
     }
   }, [])
+
+  useEffect(() => {
+    setConnected(wsStatus === 'open')
+  }, [wsStatus])
+
+  useEffect(() => {
+    if (!lastMessage) return
+    const raw = String(lastMessage || '')
+    const low = raw.trim().toLowerCase()
+    let payload = null
+    try { const p = JSON.parse(raw); if (p && typeof p === 'object') payload = p } catch {}
+    if (low.includes('device opened') || String(payload?.status || '').toLowerCase().includes('device opened')) {
+      setMessage('Device opened')
+    }
+    if (low.includes('captured') || String(payload?.status || '').toLowerCase().includes('captured')) {
+      setCaptured(true)
+      setScanning(false)
+      setMessage('Captured')
+    }
+    if (low.includes('image ready') || String(payload?.status || '').toLowerCase().includes('image ready')) {
+      const img = payload?.data?.image
+      const fmt = String(payload?.data?.image_format || '').toLowerCase() || 'png'
+      const name = String(payload?.data?.file_name || `scan.${fmt || 'png'}`)
+      const size = Number(payload?.data?.image_size || 0) || 0
+      if (img) setWsImageSrc(`data:image/${fmt};base64,${img}`)
+      if (img) setMatchedImage(`data:image/${fmt};base64,${img}`)
+      setWsMeta({ name, format: fmt || 'png', size })
+      setMessage('Image ready')
+      if (img) {
+        try {
+          const blob = base64ToBlob(img, `image/${fmt || 'png'}`)
+          const f = new File([blob], name, { type: `image/${fmt || 'png'}` })
+          setFile(f)
+          setCaptured(true)
+          setScanning(false)
+          setScanProgress(100)
+          startMatching()
+        } catch {}
+      }
+    }
+  }, [lastMessage])
+
+  useEffect(() => {
+    if (wsError) setMessage(String(wsError))
+  }, [wsError])
 
   useEffect(() => {
     let cancelled = false
@@ -76,99 +122,31 @@ export default function Scanner() {
     return () => {}
   }, [file])
 
-  const handleConnect = async () => {
-    try {
-      setConnected(true)
-      setMessage(t('scanner.msgConnected', 'Scanner connected. You can start scanning'))
-      notify(t('scanner.connected'), 'success')
-    } catch (e) {
-      setMessage(t('scanner.msgConnectFailed', 'Failed to connect to scanner'))
-      notify(t('common.failed'), 'error')
-    }
-  }
-
   const startMatching = async () => {
+    if (!file) return
     setMatching(true)
     setMatchProgress(0)
     setMessage(t('scanner.msgMatching', 'Matching captured fingerprint against database…'))
     setResults([])
-    if (file) {
-      try {
-        const res = await matchFingerprint({ file })
-        const scoreRaw = Number(res?.certainty ?? res?.score ?? 0)
-        const pct = scoreRaw <= 1 ? Math.round(scoreRaw * 100) : Math.round(scoreRaw)
-        const id = res?.user?.username || String(res?.user?.id || 'Unknown')
-        setMatchedImage(res?.image || '')
-        setResults([{ id, score: Math.max(0, Math.min(100, pct)) }])
-        setMatchProgress(100)
-        setMessage(t('scanner.msgMatchDone', 'Matching complete. Review top candidates by certainty.'))
-      } catch (e) {
-        notify(t('common.failed'), 'error')
-        setMessage(t('scanner.msgMatchDone', 'Matching complete. Review top candidates by certainty.'))
-      } finally {
-        setMatching(false)
-      }
-    } else {
-      const candidates = [
-        'User-0007',
-        'User-0132',
-        'User-0420',
-        'User-1024',
-        'User-2048',
-        'User-4096',
-        'User-8192',
-      ]
-      let idx = 0
-      matchTimer.current = setInterval(() => {
-        setMatchProgress((p) => {
-          const step = 6 + Math.random() * 10
-          const next = Math.min(100, p + step)
-          if (idx < candidates.length && Math.random() > 0.4) {
-            const name = candidates[idx++]
-            const score = Math.floor(40 + Math.random() * 40)
-            setResults((r) => [...r, { id: name, score }].sort((a, b) => b.score - a.score))
-          }
-          if (next >= 100) {
-            clearInterval(matchTimer.current)
-            setMessage(t('scanner.msgMatchDone', 'Matching complete. Review top candidates by certainty.'))
-            setMatching(false)
-          }
-          return next
-        })
-      }, 500)
+    try {
+      const res = await matchFingerprint({ file })
+      const scoreRaw = Number(res?.certainty ?? res?.score ?? 0)
+      const pct = scoreRaw <= 1 ? Math.round(scoreRaw * 100) : Math.round(scoreRaw)
+      const id = res?.user?.username || String(res?.user?.id || 'Unknown')
+      setMatchedImage(res?.image || '')
+      setResults([{ id, score: Math.max(0, Math.min(100, pct)) }])
+      setMatchProgress(100)
+      setMessage(t('scanner.msgMatchDone', 'Matching complete. Review top candidates by certainty.'))
+    } catch (e) {
+      setMessage(t('common.searchFailed', 'Search failed. Please try again.'))
+    } finally {
+      setMatching(false)
     }
   }
 
-  const handleStart = () => {
-    if (!connected) return
-    setScanning(true)
-    setCaptured(false)
-    setMatching(false)
-    setSelectedId('')
-    setMessage(t('scanner.msgPlaceFinger', 'Place your finger on the scanner'))
-    setScanProgress(0)
-    if (matchTimer.current) clearInterval(matchTimer.current)
-
-    scanTimer.current = setInterval(() => {
-      setScanProgress((p) => {
-        const next = Math.min(100, p + Math.random() * 18 + 6)
-        if (next >= 100) {
-          clearInterval(scanTimer.current)
-          setScanning(false)
-          setCaptured(true)
-          setScanSeed(Math.floor(Math.random() * 1e9))
-          setMessage(t('scanner.msgScanComplete', 'Scan complete. Starting match…'))
-          startMatching()
-          push(t('scanner.msgMatchingStarted', 'Scan complete. Matching started'), 'info')
-        }
-        return next
-      })
-    }, 400)
-  }
+  const handleStart = () => {}
 
   const handleCancel = () => {
-    if (scanTimer.current) clearInterval(scanTimer.current)
-    if (matchTimer.current) clearInterval(matchTimer.current)
     setScanning(false)
     setMatching(false)
     setScanProgress(0)
@@ -207,17 +185,25 @@ export default function Scanner() {
                 <div ref={lottieRef} className={`absolute inset-0 ${scanning ? 'opacity-100' : 'opacity-0'} transition-opacity`} />
                 {!scanning && (
                   <div className="absolute inset-0 flex items-center justify-center text-base-content/50 text-sm">
-                    {fileUrl ? (
+                    {wsImageSrc ? (
+                      <img src={wsImageSrc} alt="captured" className="h-full w-full object-contain" />
+                    ) : fileUrl ? (
                       <img src={fileUrl} alt="captured" className="h-full w-full object-contain" />
                     ) : captured ? 'Fingerprint captured' : 'Scanner preview'}
                   </div>
                 )}
               </div>
+              {wsImageSrc && (
+                <div className="mt-2 w-full text-xs text-base-content/70">
+                  <div className="flex items-center gap-3">
+                    <span className="badge badge-ghost">{wsMeta.name || 'image'}</span>
+                    <span className="badge badge-ghost">{wsMeta.format || 'png'}</span>
+                    {wsMeta.size ? <span className="badge badge-ghost">{wsMeta.size} bytes</span> : null}
+                  </div>
+                </div>
+              )}
           <div className="flex items-center gap-4">
-            <div className="radial-progress text-primary" style={{"--value": scanProgress, "--size": '3rem'}} role="progressbar">
-              {Math.round(scanProgress)}%
-            </div>
-            <progress className="progress progress-primary w-56" value={scanProgress} max="100" />
+            <div className="text-xs text-base-content/60">{captured ? 'Captured' : 'Waiting for capture…'}</div>
           </div>
           <div className="form-control w-full max-w-xs">
             <div className="label"><span className="label-text">Upload fingerprint</span></div>
@@ -314,36 +300,12 @@ export default function Scanner() {
           )}
 
           <div className="flex flex-wrap items-center gap-3">
-            <Button
-              variant="secondary"
-              onClick={handleConnect}
-              disabled={connected}
-              className="min-w-28"
-            >
-              {connected ? t('scanner.connected') : t('scanner.connect')}
-            </Button>
-
-            <Button
-              onClick={handleStart}
-              disabled={!connected || scanning || matching}
-              className="min-w-28"
-            >
-              {scanning ? t('scanner.scanning') : t('scanner.start')}
-            </Button>
-
-            <Button
-              variant="secondary"
-              onClick={handleCancel}
-              disabled={!scanning && !matching}
-              className="min-w-28"
-            >
-              {t('scanner.cancel')}
+            <Button variant="secondary" onClick={wsReconnect} disabled={wsStatus==='open' || wsStatus==='connecting'} className="min-w-28">
+              {wsStatus==='open' ? t('scanner.connected') : t('scanner.connect')}
             </Button>
           </div>
 
-          <div className="text-xs text-base-content/60">
-            Tip: Replace simulated logic with your scanner SDK and a real matcher. Show live thumbnails or minutiae overlays if available.
-          </div>
+          
         </div>
       </div>
     </div>
@@ -390,4 +352,12 @@ function FingerprintPreview({ seed, width = 160, height = 200 }) {
       ))}
     </svg>
   )
+}
+
+function base64ToBlob(b64, mime = 'application/octet-stream') {
+  const bin = atob(b64)
+  const len = bin.length
+  const buf = new Uint8Array(len)
+  for (let i = 0; i < len; i++) buf[i] = bin.charCodeAt(i)
+  return new Blob([buf], { type: mime })
 }
