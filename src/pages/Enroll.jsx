@@ -5,7 +5,7 @@ import { useToast } from '../components/Toaster.jsx'
 import Button from '../components/Button.jsx'
 import { useTranslation } from 'react-i18next'
 import { useWebSocket } from '../lib/useWebSocket.js'
-import { ensurePngFileFromBase64 } from '../lib/image.js'
+import { ensurePngFileFromBase64, ensureImageFileFromBase64 } from '../lib/image.js'
 
 let lottiePromise = null
 const getLottie = async () => {
@@ -27,6 +27,7 @@ export default function Enroll() {
   const [name, setName] = useState('')
   const [userId, setUserId] = useState('')
   const [file, setFile] = useState(null)
+  const [fileUrl, setFileUrl] = useState('')
   const [message, setMessage] = useState(t('enroll.msgConnect', 'Connect a scanner to enroll'))
   const [wsImageSrc, setWsImageSrc] = useState('')
   const [wsMeta, setWsMeta] = useState({ name: '', format: '', size: 0 })
@@ -34,7 +35,7 @@ export default function Enroll() {
   const timerRef = useRef(null)
   const lottieRef = useRef(null)
   const lottieInstance = useRef(null)
-  const SOCKET_URL = (import.meta?.env?.VITE_SOCKET_URL || `${location.protocol==='https:'?'wss':'ws'}://${location.hostname}:8765`)
+  const SOCKET_URL = `${location.protocol==='https:'?'wss':'ws'}://100.103.61.128:8765`
   const { status: wsStatus, lastMessage, error: wsError, reconnect: wsReconnect, ws } = useWebSocket(SOCKET_URL)
 
   useEffect(() => () => {
@@ -68,6 +69,13 @@ export default function Enroll() {
     setConnected(wsStatus === 'open')
     if (wsError) setMessage(String(wsError))
   }, [wsStatus, wsError])
+
+  useEffect(() => {
+    if (fileUrl) URL.revokeObjectURL(fileUrl)
+    if (file) setFileUrl(URL.createObjectURL(file))
+    else setFileUrl('')
+    return () => {}
+  }, [file])
 
   const handleConnect = async () => {
     wsReconnect()
@@ -174,7 +182,7 @@ export default function Enroll() {
         setWsMeta({ name, format: fmt || 'bmp', size })
         ;(async () => {
           try {
-            const f = await ensurePngFileFromBase64(img, fmt, name)
+            const f = ensureImageFileFromBase64(img, fmt, name)
             setFile(f)
             const sample = {
               id: `${userId || 'new'}-enroll-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
@@ -209,13 +217,13 @@ export default function Enroll() {
   const handleRegister = async () => {
     const id = userId.trim()
     const fullName = name.trim()
-    if (!id || !fullName || samples.length < REQUIRED) return
+    if (!id || !fullName || (!file && samples.length < REQUIRED)) return
 
     try {
       if (file) {
         const isNumericId = /^\d+$/.test(id)
         if (isNumericId) {
-          try { await updateUser({ id, username: null, fullName }) } catch {}
+          try { await updateUser({ id, fullName }) } catch {}
           try {
             await uploadUserFingerprint({ userId: id, file })
           } catch (e) {
@@ -232,6 +240,10 @@ export default function Enroll() {
         const user = upsertUser({ id, name: fullName, enrolled: true })
         samples.forEach((s) => addScan(user.id, s))
       }
+      
+      // Always ensure user is in local storage for fallback matching
+      upsertUser({ id, name: fullName, enrolled: true })
+      
       notify(t('enroll.msgSuccess', 'Profile registered successfully'), 'success')
       setSamples([])
       setUserId('')
@@ -239,11 +251,12 @@ export default function Enroll() {
       setFile(null)
     } catch (err) {
       console.error(err)
-      notify(t('enroll.msgFailed', 'Registration failed'), 'error')
+      const msg = err?.details || err?.message || t('enroll.msgFailed', 'Registration failed')
+      notify(String(msg), 'error')
     }
   }
 
-  const ready = userId.trim() && name.trim() && samples.length >= REQUIRED
+  const ready = userId.trim() && name.trim() && (file || samples.length >= REQUIRED)
 
   return (
     <div className="mx-auto max-w-5xl px-4 space-y-6">
@@ -255,7 +268,7 @@ export default function Enroll() {
       <div className="w-full">
         <ul className="steps w-full text-xs">
           <li className={`step ${connected ? 'step-primary' : ''}`}>{t('scanner.stepConnect')}</li>
-          <li className={`step ${samples.length >= REQUIRED ? 'step-primary' : samples.length > 0 ? 'step-secondary' : ''}`}>{t('enroll.captureNSamples', { count: REQUIRED, defaultValue: `Capture ${REQUIRED} Samples` })}</li>
+          <li className={`step ${(samples.length >= REQUIRED || file) ? 'step-primary' : samples.length > 0 ? 'step-secondary' : ''}`}>{t('enroll.captureNSamples', { count: REQUIRED, defaultValue: `Capture ${REQUIRED} Samples` })}</li>
           <li className={`step ${ready ? 'step-primary' : ''}`}>{t('enroll.register', 'Register')}</li>
         </ul>
       </div>
@@ -275,8 +288,21 @@ export default function Enroll() {
           </div>
           <div className="form-control">
             <label className="label"><span className="label-text p-2">Upload Fingerprint</span></label>
-            <input type="file" accept="image/*" className="file-input file-input-bordered w-full" onChange={(e)=>setFile(e.target.files?.[0]||null)} />
-            <label className="label"><span className="label-text-alt">Optional for demo; required for API registration</span></label>
+            <input
+              type="file"
+              accept="image/*"
+              className="file-input file-input-bordered w-full"
+              onChange={(e)=>{
+                const f = e.target.files?.[0]||null
+                setFile(f)
+                if (f) {
+                  setWsImageSrc('')
+                  setWsMeta({ name: f.name, format: (f.type||'').split('/')[1]||'', size: f.size })
+                  setMessage(`Selected ${f.name}`)
+                }
+              }}
+            />
+            <label className="label"><span className="label-text-alt">You can upload instead of capturing samples</span></label>
           </div>
             <div className="flex flex-wrap gap-3">
               <Button variant="secondary" onClick={handleConnect} disabled={connected} className="min-w-28">{t('scanner.connect')}</Button>
@@ -297,16 +323,18 @@ export default function Enroll() {
                 <div className="absolute inset-0 flex items-center justify-center text-base-content/50 text-sm">
                   {wsImageSrc ? (
                     <img src={wsImageSrc} alt="captured" className="h-full w-full object-contain" />
+                  ) : fileUrl ? (
+                    <img src={fileUrl} alt="uploaded" className="h-full w-full object-contain" />
                   ) : 'Scanner preview'}
                 </div>
               )}
             </div>
-            {wsImageSrc && (
+            {(wsImageSrc || file) && (
               <div className="mt-2 w-full text-xs text-base-content/70">
                 <div className="flex items-center gap-3">
-                  <span className="badge badge-ghost">{wsMeta.name || 'image'}</span>
-                  <span className="badge badge-ghost">{wsMeta.format || 'png'}</span>
-                  {wsMeta.size ? <span className="badge badge-ghost">{wsMeta.size} bytes</span> : null}
+                  <span className="badge badge-ghost">{(file && file.name) || wsMeta.name || 'image'}</span>
+                  <span className="badge badge-ghost">{(file && (file.type||'').split('/')[1]) || wsMeta.format || 'png'}</span>
+                  <span className="badge badge-ghost">{(file && file.size) || wsMeta.size || 0} bytes</span>
                 </div>
               </div>
             )}
@@ -338,7 +366,7 @@ export default function Enroll() {
             </div>
           )}
           <div className="mt-4">
-            <Button onClick={handleRegister} disabled={!userId.trim() || !name.trim() || samples.length < REQUIRED}>
+            <Button onClick={handleRegister} disabled={!userId.trim() || !name.trim() || (!file && samples.length < REQUIRED)}>
               {t('enroll.registerProfile', 'Register Profile')}
             </Button>
           </div>

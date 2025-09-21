@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import Button from '../components/Button.jsx'
 import { useToast } from '../components/Toaster.jsx'
 import DoorRow from '../components/DoorRow.jsx'
-import { secListRooms, secCreateRoom, secDeleteRoom, secUpdateRoom, secListAccess, secCreateAccess, secDeleteUserAccess, secListLogs, secCheckCanUnlock, secCreateUser } from '../lib/api.js'
+import { secListRooms, secCreateRoom, secDeleteRoom, secUpdateRoom, secListAccess, secCreateAccess, secDeleteUserAccess, secListLogs, secCheckCanUnlock, secCreateUser, listUsers } from '../lib/api.js'
 import houseAnim from '../assets/Home/animations/d44917cf-27bb-468e-93d6-f6b6e31f89da.json'
 
 let lottieSecPromise = null
@@ -19,11 +19,17 @@ export default function Security() {
   const [doors, setDoors] = useState([])
   const [rulesTick, setRulesTick] = useState(0)
   const [user, setUser] = useState('')
+  const [ruleUserOptions, setRuleUserOptions] = useState([])
+  const [ruleUserSearching, setRuleUserSearching] = useState(false)
+  const ruleUserDebRef = useRef(null)
   const [doorId, setDoorId] = useState('')
   const [start, setStart] = useState('')
   const [end, setEnd] = useState('')
   const [ruleAlways, setRuleAlways] = useState(false)
   const [testUser, setTestUser] = useState('')
+  const [testUserOptions, setTestUserOptions] = useState([])
+  const [testUserSearching, setTestUserSearching] = useState(false)
+  const testUserDebRef = useRef(null)
   const [testDoorId, setTestDoorId] = useState('')
   const [decision, setDecision] = useState('')
   const [newUserName, setNewUserName] = useState('')
@@ -41,7 +47,7 @@ export default function Security() {
       } catch {}
       try {
         const a = await secListAccess({})
-        const rr = Array.isArray(a) ? a.map(x => ({ id: x.id || `${x.user_id}-${x.room_id}` , user: String(x.user_id), doorId: String(x.room_id), start: x.from_hour, end: x.to_hour, always: x.all_time_access === true || x.all_time === true || x.always === true || x.anytime === true || (x.from_hour == null && x.to_hour == null) })) : []
+        const rr = Array.isArray(a) ? a.map(x => ({ id: x.id || `${x.user_id}-${x.room_id}` , user: String(x.user_name ?? x.username ?? x.user ?? x.name ?? x.user_id), doorId: String(x.room_id), start: x.from_hour, end: x.to_hour, always: x.all_time_access === true || x.all_time === true || x.always === true || x.anytime === true || (x.from_hour == null && x.to_hour == null) })) : []
         setRules(rr)
       } catch {}
       try {
@@ -103,7 +109,7 @@ export default function Security() {
     const id = setInterval(async () => {
       try {
         const a = await secListAccess({})
-        const rr = Array.isArray(a) ? a.map(x => ({ id: x.id || `${x.user_id}-${x.room_id}`, user: String(x.user_id), doorId: String(x.room_id), start: x.from_hour, end: x.to_hour, always: x.all_time_access === true || x.all_time === true || x.always === true || x.anytime === true || (x.from_hour == null && x.to_hour == null) })) : []
+        const rr = Array.isArray(a) ? a.map(x => ({ id: x.id || `${x.user_id}-${x.room_id}`, user: String(x.user_name ?? x.username ?? x.user ?? x.name ?? x.user_id), doorId: String(x.room_id), start: x.from_hour, end: x.to_hour, always: x.all_time_access === true || x.all_time === true || x.always === true || x.anytime === true || (x.from_hour == null && x.to_hour == null) })) : []
         setRules(rr)
       } catch {}
       try {
@@ -188,12 +194,11 @@ export default function Security() {
   }
 
   const handleRuleAdd = async () => {
-    if (!user.trim() || !doorId) return
-    const userNum = Number(user.trim())
+    const userName = user.trim()
+    if (!userName || !doorId) return
     const roomNum = Number(doorId)
-    if (!Number.isFinite(userNum) || !Number.isFinite(roomNum)) { push('Enter numeric user and room IDs', 'warning'); return }
     try {
-      const data = { user_id: userNum, room_id: roomNum }
+      const data = { room_id: Number.isFinite(roomNum) ? roomNum : doorId, user_name: userName }
       if (ruleAlways) {
         data.all_time_access = true
         data.from_hour = null
@@ -216,13 +221,11 @@ export default function Security() {
 
   const handleTest = async () => {
     if (!testUser.trim() || !testDoorId) return
-    const userNum = Number(testUser.trim())
-    const roomNum = Number(testDoorId)
-    if (!Number.isFinite(userNum) || !Number.isFinite(roomNum)) { push('Enter numeric user and room IDs', 'warning'); return }
+    const roomVal = Number(testDoorId)
     let ok = false
     try {
-      const res = await secCheckCanUnlock({ userId: userNum, roomId: roomNum })
-      ok = res === true || res?.result === true || res?.canUnlock === true || res?.can_unlock === true
+      const res = await secCheckCanUnlock({ userName: testUser.trim(), roomId: Number.isFinite(roomVal) ? roomVal : testDoorId })
+      ok = res === true || res?.result === true || res?.canUnlock === true || res?.can_unlock === true || res?.can_access === true || res?.canAccess === true
     } catch {
       push('Failed to check access', 'error')
     }
@@ -282,9 +285,49 @@ export default function Security() {
         <div className="card-body gap-3">
           <h2 className="card-title">{t('security.testTitle')}</h2>
           <div className="flex flex-wrap items-end gap-3">
-            <label className="form-control">
+            <label className="form-control relative w-full sm:max-w-xs">
               <div className="label"><span className="label-text">{t('security.user')}</span></div>
-              <input className="input input-bordered" value={testUser} onChange={(e)=>setTestUser(e.target.value)} placeholder="User ID (number)" />
+              <input
+                className={`input input-bordered ${testUserSearching ? 'input-disabled' : ''}`}
+                value={testUser}
+                onChange={(e)=>{
+                  const v = e.target.value
+                  setTestUser(v)
+                  if (testUserDebRef.current) clearTimeout(testUserDebRef.current)
+                  if (!v.trim()) { setTestUserOptions([]); return }
+                  testUserDebRef.current = setTimeout(async () => {
+                    setTestUserSearching(true)
+                    try {
+                      const raw = await listUsers({ page: 1, pageSize: 50 })
+                      const items = Array.isArray(raw) ? raw : (Array.isArray(raw?.items) ? raw.items : (Array.isArray(raw?.results) ? raw.results : []))
+                      const q = v.trim().toLowerCase()
+                      const opts = (items || [])
+                        .map(u => ({ id: u.id, username: u.username || String(u.id), fullName: u.fullName || u.name || u.username || String(u.id) }))
+                        .filter(u => u.fullName.toLowerCase().includes(q) || u.username.toLowerCase().includes(q))
+                        .slice(0, 8)
+                      setTestUserOptions(opts)
+                    } catch {
+                      setTestUserOptions([])
+                    } finally {
+                      setTestUserSearching(false)
+                    }
+                  }, 300)
+                }}
+                placeholder="User name"
+                autoComplete="off"
+              />
+              {testUserOptions.length > 0 && (
+                <ul className="menu dropdown-content absolute top-full mt-1 w-full bg-base-100 rounded-box shadow z-20">
+                  {testUserOptions.map((u) => (
+                    <li key={u.id}>
+                      <button type="button" onClick={() => { setTestUser(u.fullName); setTestUserOptions([]) }}>
+                        <span className="font-medium">{u.fullName}</span>
+                        <span className="text-xs text-base-content/60">{u.username}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </label>
             <label className="form-control">
               <div className="label"><span className="label-text">{t('security.door')}</span></div>
@@ -427,9 +470,49 @@ export default function Security() {
           <div className="grid gap-4 md:grid-cols-2 items-start">
             <div className="space-y-3">
               <div className="flex flex-wrap items-end gap-3">
-                <label className="form-control">
+                <label className="form-control relative w-full sm:max-w-xs">
                   <div className="label"><span className="label-text">{t('security.user')}</span></div>
-                  <input className="input input-bordered" value={user} onChange={(e)=>setUser(e.target.value)} placeholder="User ID (number)" />
+                  <input
+                    className={`input input-bordered ${ruleUserSearching ? 'input-disabled' : ''}`}
+                    value={user}
+                    onChange={(e)=>{
+                      const v = e.target.value
+                      setUser(v)
+                      if (ruleUserDebRef.current) clearTimeout(ruleUserDebRef.current)
+                      if (!v.trim()) { setRuleUserOptions([]); return }
+                      ruleUserDebRef.current = setTimeout(async () => {
+                        setRuleUserSearching(true)
+                        try {
+                          const raw = await listUsers({ page: 1, pageSize: 50 })
+                          const items = Array.isArray(raw) ? raw : (Array.isArray(raw?.items) ? raw.items : (Array.isArray(raw?.results) ? raw.results : []))
+                          const q = v.trim().toLowerCase()
+                          const opts = (items || [])
+                            .map(u => ({ id: u.id, username: u.username || String(u.id), fullName: u.fullName || u.name || u.username || String(u.id) }))
+                            .filter(u => u.fullName.toLowerCase().includes(q) || u.username.toLowerCase().includes(q))
+                            .slice(0, 8)
+                          setRuleUserOptions(opts)
+                        } catch {
+                          setRuleUserOptions([])
+                        } finally {
+                          setRuleUserSearching(false)
+                        }
+                      }, 300)
+                    }}
+                    placeholder={t('security.userName')}
+                    autoComplete="off"
+                  />
+                  {ruleUserOptions.length > 0 && (
+                    <ul className="menu dropdown-content absolute top-full mt-1 w-full bg-base-100 rounded-box shadow z-20">
+                      {ruleUserOptions.map((u) => (
+                        <li key={u.id}>
+                          <button type="button" onClick={() => { setUser(u.fullName); setRuleUserOptions([]) }}>
+                            <span className="font-medium">{u.fullName}</span>
+                            <span className="text-xs text-base-content/60">{u.username}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </label>
                 <label className="form-control">
                   <div className="label"><span className="label-text">{t('security.door')}</span></div>

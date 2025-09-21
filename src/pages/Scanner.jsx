@@ -11,7 +11,7 @@ import scanAnim from '../assets/Fingerprint Scan/animations/fbafd0c6-2dfc-40d3-8
 import Button from '../components/Button.jsx'
 import { matchFingerprint } from '../lib/api.js'
 import { useWebSocket } from '../lib/useWebSocket.js'
-import { ensurePngFileFromBase64 } from '../lib/image.js'
+import { ensurePngFileFromBase64, ensureImageFileFromBase64 } from '../lib/image.js'
 
 export default function Scanner() {
   const { t } = useTranslation()
@@ -36,7 +36,7 @@ export default function Scanner() {
   const bestRef = useRef(null)
   const lottieRef = useRef(null)
   const lottieInstance = useRef(null)
-  const SOCKET_URL = (import.meta?.env?.VITE_SOCKET_URL || `${location.protocol==='https:'?'wss':'ws'}://${location.hostname}:8765`)
+  const SOCKET_URL = `${location.protocol==='https:'?'wss':'ws'}://100.103.61.128:8765`
   const { status: wsStatus, lastMessage, error: wsError, reconnect: wsReconnect, ws } = useWebSocket(SOCKET_URL)
   
 
@@ -82,10 +82,9 @@ export default function Scanner() {
 
     if (low.includes('waiting for finger') || statusText.includes('waiting for finger')) {
       if (locked) return
-      const n = Number(payload?.scan_count || payload?.data?.scan_count || 0) || 0
       setScanning(true)
       setCaptured(false)
-      setMessage(`Waiting for finger${n ? ` (Scan #${n})` : ''}`)
+      setMessage('Waiting for finger…')
       return
     }
 
@@ -95,7 +94,7 @@ export default function Scanner() {
       setScanning(false)
       const sz = Number(payload?.data?.image_size ?? payload?.image_size ?? 0) || 0
       if (sz) setWsMeta((m) => ({ ...m, size: sz }))
-      setMessage(`Captured${sz ? ` (${sz} bytes)` : ''}`)
+      setMessage('Captured')
       return
     }
 
@@ -119,7 +118,7 @@ export default function Scanner() {
             bestRef.current = null
             if (!c) return
               try {
-              const f = await ensurePngFileFromBase64(c.img, c.fmt, c.name)
+              const f = ensureImageFileFromBase64(c.img, c.fmt, c.name)
               setFile(f)
               setMatchedImage(`data:image/${c.fmt};base64,${c.img}`)
               setCaptured(true)
@@ -220,7 +219,17 @@ export default function Scanner() {
       setMatchProgress(100)
       setMessage(t('scanner.msgMatchDone', 'Matching complete. Review top candidates by certainty.'))
     } catch (e) {
-      setMessage(t('common.searchFailed', 'Search failed. Please try again.'))
+      try { console.error('match error', e, e?.details) } catch {}
+      let detail = e?.details || ''
+      try {
+        if (detail && detail.trim().startsWith('{')) {
+          const j = JSON.parse(detail)
+          detail = j?.message || j?.error || detail
+        }
+      } catch {}
+      const status = e?.status ? ` (status ${e.status})` : ''
+      const errorMsg = detail ? `${detail}${status}` : t('common.searchFailed', 'Search failed. Please try again.')
+      setMessage(`${errorMsg} - If this is a newly enrolled user, they may need to be re-enrolled in demo mode.`)
     } finally {
       setMatching(false)
     }

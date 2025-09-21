@@ -13,8 +13,11 @@ export async function registerFingerprint({ file, username, fullName, signal }) 
   const url = `${API_BASE}/register`
   const fd = new FormData()
   fd.append('file', file)
+  try { fd.append('image', file) } catch {}
   fd.append('username', username)
+  try { fd.append('userName', username) } catch {}
   fd.append('fullName', fullName)
+  try { fd.append('FullName', fullName) } catch {}
   const res = await fetch(url, { method: 'POST', body: fd, signal })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
@@ -29,13 +32,14 @@ export async function registerFingerprint({ file, username, fullName, signal }) 
 export async function uploadUserFingerprint({ userId, file, signal }) {
   const fd = new FormData()
   fd.append('file', file)
+  try { fd.append('image', file) } catch {}
   const paths = [
     `${API_BASE}/user/${encodeURIComponent(userId)}/fingerprint`,
     `${API_BASE}/user/${encodeURIComponent(userId)}/fingerprint/`,
   ]
   let lastErr = null
   for (const url of paths) {
-    const res = await fetch(url, { method: 'POST', body: fd, signal })
+    const res = await fetch(url, { method: 'POST', headers: { Accept: 'application/json' }, body: fd, signal })
     if (res.ok) {
       try { return await res.json() } catch { return true }
     }
@@ -51,18 +55,58 @@ export async function uploadUserFingerprint({ userId, file, signal }) {
 }
 
 export async function matchFingerprint({ file, signal }) {
-  const url = `${API_BASE}/match`
-  const fd = new FormData()
-  fd.append('file', file)
-  const res = await fetch(url, { method: 'POST', body: fd, signal })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    const err = new Error(`Match failed: ${res.status} ${res.statusText}`)
-    err.details = text
-    err.status = res.status
-    throw err
+  const url = `${API_BASE}/match2`
+  async function tryWith(fieldName) {
+    const fd = new FormData()
+    fd.append(fieldName, file)
+    const res = await fetch(url, { method: 'POST', body: fd, signal })
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      const err = new Error(`Match failed: ${res.status} ${res.statusText}`)
+      err.details = text
+      err.status = res.status
+      throw err
+    }
+    return res.json()
   }
-  return await res.json()
+  try {
+    return await tryWith('file')
+  } catch (e) {
+    if (e?.status === 400 || e?.status === 415 || String(e?.details||'').toLowerCase().includes('file')) {
+      try { return await tryWith('image') } catch (_) {}
+    }
+    try {
+      const { convertFileToPng } = await import('./image.js')
+      const asPng = await convertFileToPng(file)
+      if (asPng && asPng !== file) {
+        file = asPng
+        return await tryWith('file')
+      }
+    } catch {}
+    try {
+      const b64 = await new Promise((resolve, reject) => {
+        const fr = new FileReader()
+        fr.onerror = () => reject(new Error('read-failed'))
+        fr.onload = () => resolve(String(fr.result || '').replace(/^data:[^,]*,/, ''))
+        fr.readAsDataURL(file)
+      })
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ image: b64 }),
+        signal,
+      })
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        const err = new Error(`Match failed: ${res.status} ${res.statusText}`)
+        err.details = text
+        err.status = res.status
+        throw err
+      }
+      return await res.json()
+    } catch(_) {}
+    throw e
+  }
 }
 
 export async function fetchUser({ id, signal }) {
@@ -77,12 +121,15 @@ export async function fetchUser({ id, signal }) {
   return await res.json()
 }
 
-export async function updateUser({ id, username = null, fullName = null, signal }) {
+export async function updateUser({ id, username, fullName, signal }) {
   const url = `${API_BASE}/user/${encodeURIComponent(id)}`
+  const body = {}
+  if (username !== undefined) body.username = username
+  if (fullName !== undefined) body.fullName = fullName
   const res = await fetch(url, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, fullName }),
+    body: JSON.stringify(body),
     signal,
   })
   if (!res.ok) {
@@ -130,6 +177,7 @@ export async function listUserCheckins({ userId, page = 1, pageSize = 20, signal
   }
   return await res.json()
 }
+
 
 export function getApiBase() {
   return API_BASE
@@ -359,8 +407,8 @@ export async function secDeleteUserAccess({ userId, signal }) {
   return true
 }
 
-export async function secCheckCanUnlock({ userId, roomId, signal }) {
-  const res = await fetch(`${SECURITY_BASE}/access/check-unlock/${encodeURIComponent(userId)}/${encodeURIComponent(roomId)}`, { signal })
+export async function secCheckCanUnlock({ userName, roomId, signal }) {
+  const res = await fetch(`${SECURITY_BASE}/access/check-access/${encodeURIComponent(userName)}/${encodeURIComponent(roomId)}`, { signal })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     const err = new Error(`Check unlock failed: ${res.status} ${res.statusText}`)
