@@ -137,7 +137,7 @@ export default function UserDetail() {
 
       <div className="card border border-base-300 bg-base-100 overflow-hidden">
         <div className="card-body gap-4">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 flex-wrap">
             <div className="flex-1 min-w-0">
               <h1 className="card-title truncate">{user.name || user.id}</h1>
               <div className="mt-1 flex flex-wrap items-center gap-2 text-sm">
@@ -146,7 +146,7 @@ export default function UserDetail() {
                 <span className="badge badge-ghost">{t('user.lastSeen', 'Last seen')}: {stats.lastDate}</span>
               </div>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               <Link to="/scanner" className="btn btn-primary btn-sm">{t('user.verify', 'Verify')}</Link>
               <Link to="/search" className="btn btn-secondary btn-sm">{t('common.back', 'Back')}</Link>
             </div>

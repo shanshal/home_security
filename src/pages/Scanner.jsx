@@ -272,7 +272,7 @@ export default function Scanner() {
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <div className="flex flex-col items-center gap-4">
-              <div className="aspect-[3/4] w-64 rounded-lg border border-base-300 bg-base-200/60 overflow-hidden relative">
+              <div className="aspect-[3/4] w-full max-w-xs sm:max-w-sm md:max-w-md rounded-lg border border-base-300 bg-base-200/60 overflow-hidden relative">
                 <div ref={lottieRef} className={`absolute inset-0 ${scanning ? 'opacity-100' : 'opacity-0'} transition-opacity`} />
                 {!scanning && (
                   <div className="absolute inset-0 flex items-center justify-center text-base-content/50 text-sm">

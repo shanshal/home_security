@@ -85,7 +85,7 @@ export default function AccessLog() {
               <option value="7d">Last 7 days</option>
             </select>
           </label>
-          <div className="ml-auto flex gap-2">
+          <div className="ml-auto w-full sm:w-auto flex gap-2 justify-end">
             <button className="btn btn-secondary btn-sm" onClick={exportCSV}>Export CSV</button>
             <button className="btn btn-secondary btn-sm" onClick={exportJSON}>Export JSON</button>
           </div>

@@ -46,7 +46,7 @@ export default function LockDetail() {
               {lock.status === 'locked' ? t('locks.locked') : t('locks.unlocked')}
             </span>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <button className="btn btn-secondary" disabled={lock.status === 'locked'} onClick={() => handleStatus('locked')}>{t('locks.lock')}</button>
             <button className="btn btn-primary" disabled={lock.status === 'unlocked'} onClick={() => handleStatus('unlocked')}>{t('locks.unlock')}</button>
             <Link to="/locks" className="btn btn-ghost">{t('common.back', 'Back')}</Link>

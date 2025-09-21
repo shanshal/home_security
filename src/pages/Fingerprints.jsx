@@ -94,7 +94,7 @@ export default function Fingerprints() {
                 {locks.map((l)=>(<option key={l.id} value={l.id}>{l.name}</option>))}
               </select>
             </label>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <Button onClick={capture} disabled={scanning || samples.length>=REQUIRED}>{scanning ? t('scanner.scanning') : t('enroll.captureSample')}</Button>
               <Button variant="secondary" onClick={()=>setSamples(samples.slice(0, -1))} disabled={samples.length===0}>{t('common.remove')}</Button>
               <Button variant="secondary" onClick={()=>setSamples([])} disabled={samples.length===0}>{t('enroll.resetSamples')}</Button>

@@ -315,7 +315,7 @@ export default function Security() {
         </div>
       </div>
 
-      <div className="stats shadow bg-base-100 border border-base-300">
+      <div className="stats stats-vertical sm:stats-horizontal shadow bg-base-100 border border-base-300">
         <div className="stat">
           <div className="stat-title">{t('security.doorsTitle')}</div>
           <div className="stat-value text-primary text-5xl lg:text-6xl">{doors.length}</div>
