@@ -14,15 +14,40 @@ export async function registerFingerprint({ file, username, fullName, signal }) 
   const fd = new FormData()
   fd.append('file', file)
   fd.append('username', username)
-  fd.append('FullName', fullName)
+  fd.append('fullName', fullName)
   const res = await fetch(url, { method: 'POST', body: fd, signal })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     const err = new Error(`Register failed: ${res.status} ${res.statusText}`)
     err.details = text
+    err.status = res.status
     throw err
   }
   return await res.json()
+}
+
+export async function uploadUserFingerprint({ userId, file, signal }) {
+  const fd = new FormData()
+  fd.append('file', file)
+  const paths = [
+    `${API_BASE}/user/${encodeURIComponent(userId)}/fingerprint`,
+    `${API_BASE}/user/${encodeURIComponent(userId)}/fingerprint/`,
+  ]
+  let lastErr = null
+  for (const url of paths) {
+    const res = await fetch(url, { method: 'POST', body: fd, signal })
+    if (res.ok) {
+      try { return await res.json() } catch { return true }
+    }
+    const text = await res.text().catch(() => '')
+    const err = new Error(`Upload fingerprint failed: ${res.status} ${res.statusText}`)
+    err.details = text
+    err.status = res.status
+    lastErr = err
+    if (res.status === 404) continue
+    break
+  }
+  throw lastErr || new Error('Upload fingerprint failed')
 }
 
 export async function matchFingerprint({ file, signal }) {
@@ -34,6 +59,7 @@ export async function matchFingerprint({ file, signal }) {
     const text = await res.text().catch(() => '')
     const err = new Error(`Match failed: ${res.status} ${res.statusText}`)
     err.details = text
+    err.status = res.status
     throw err
   }
   return await res.json()
@@ -63,6 +89,7 @@ export async function updateUser({ id, username = null, fullName = null, signal 
     const text = await res.text().catch(() => '')
     const err = new Error(`Update user failed: ${res.status} ${res.statusText}`)
     err.details = text
+    err.status = res.status
     throw err
   }
   return await res.json()

@@ -11,10 +11,12 @@ import scanAnim from '../assets/Fingerprint Scan/animations/fbafd0c6-2dfc-40d3-8
 import Button from '../components/Button.jsx'
 import { matchFingerprint } from '../lib/api.js'
 import { useWebSocket } from '../lib/useWebSocket.js'
+import { ensurePngFileFromBase64 } from '../lib/image.js'
 
 export default function Scanner() {
   const { t } = useTranslation()
   const [connected, setConnected] = useState(false)
+  const [mode, setMode] = useState('scan')
   const [scanning, setScanning] = useState(false)
   const [scanProgress, setScanProgress] = useState(0)
   const [message, setMessage] = useState(t('scanner.msgConnectPrompt', 'Connect your scanner to begin'))
@@ -22,7 +24,6 @@ export default function Scanner() {
   const [matching, setMatching] = useState(false)
   const [matchProgress, setMatchProgress] = useState(0)
   const [results, setResults] = useState([])
-  const [minCert, setMinCert] = useState(70)
   const [selectedId, setSelectedId] = useState('')
   const [scanSeed, setScanSeed] = useState(0)
   const [file, setFile] = useState(null)
@@ -35,7 +36,7 @@ export default function Scanner() {
   const bestRef = useRef(null)
   const lottieRef = useRef(null)
   const lottieInstance = useRef(null)
-  const SOCKET_URL = 'ws://100.103.61.128:8765'
+  const SOCKET_URL = (import.meta?.env?.VITE_SOCKET_URL || `${location.protocol==='https:'?'wss':'ws'}://${location.hostname}:8765`)
   const { status: wsStatus, lastMessage, error: wsError, reconnect: wsReconnect, ws } = useWebSocket(SOCKET_URL)
   
 
@@ -56,14 +57,15 @@ export default function Scanner() {
   }, [wsStatus])
 
   useEffect(() => {
-    if (wsStatus !== 'open' || locked) return
+    if (wsStatus !== 'open' || locked || mode !== 'scan') return
     setScanning(true)
     setMessage('Starting scan…')
     const msg = 'start'
     try { if (ws && ws.readyState === 1) ws.send(msg) } catch {}
-  }, [wsStatus, ws, locked])
+  }, [wsStatus, ws, locked, mode])
 
   useEffect(() => {
+    if (mode !== 'scan') return
     if (!lastMessage) return
     const raw = String(lastMessage || '')
     const low = raw.trim().toLowerCase()
@@ -116,7 +118,7 @@ export default function Scanner() {
             acceptTimer.current = null
             bestRef.current = null
             if (!c) return
-            try {
+              try {
               const f = await ensurePngFileFromBase64(c.img, c.fmt, c.name)
               setFile(f)
               setMatchedImage(`data:image/${c.fmt};base64,${c.img}`)
@@ -143,7 +145,7 @@ export default function Scanner() {
       setMessage(`Error - ${err}`)
       return
     }
-  }, [lastMessage])
+  }, [lastMessage, mode])
 
   useEffect(() => {
     if (wsError) setMessage(String(wsError))
@@ -241,6 +243,24 @@ export default function Scanner() {
 
       <div className="card bg-base-100 shadow-sm border border-base-300">
         <div className="card-body gap-6">
+          <div className="flex items-center justify-between">
+            <div className="join">
+              <button className={`btn btn-sm join-item ${mode==='scan' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => {
+                setMode('scan')
+                setLocked(false)
+                setMessage('Starting scan…')
+                try { if (ws && ws.readyState === 1) ws.send('start') } catch {}
+                setScanning(true)
+              }}>Scan</button>
+              <button className={`btn btn-sm join-item ${mode==='upload' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => {
+                setMode('upload')
+                setLocked(true)
+                setScanning(false)
+                setMessage('Upload a fingerprint image to match')
+                try { if (ws && ws.readyState === 1) ws.send('stop') } catch {}
+              }}>Upload</button>
+            </div>
+          </div>
           <div className="flex flex-col gap-2">
             <p className="text-sm text-base-content/70">{message}</p>
             <ul className="steps steps-horizontal lg:steps-horizontal text-xs">
@@ -273,13 +293,28 @@ export default function Scanner() {
                   </div>
                 </div>
               )}
-          <div className="flex items-center gap-4">
-            <div className="text-xs text-base-content/60">{captured ? 'Captured' : 'Waiting for capture…'}</div>
-          </div>
-          <div className="form-control w-full max-w-xs">
-            <div className="label"><span className="label-text">Upload fingerprint</span></div>
-            <input type="file" accept="image/*" className="file-input file-input-bordered" onChange={(e)=>setFile(e.target.files?.[0]||null)} />
-          </div>
+          {mode==='scan' ? (
+            <div className="flex items-center gap-4">
+              <div className="text-xs text-base-content/60">{captured ? 'Captured' : 'Waiting for capture…'}</div>
+            </div>
+          ) : (
+            <div className="form-control w-full max-w-xs">
+              <div className="label"><span className="label-text">Upload fingerprint</span></div>
+              <input type="file" accept="image/*" className="file-input file-input-bordered" onChange={async (e)=>{
+                const f = e.target.files?.[0]||null
+                setFile(f)
+                if (f) {
+                  if (fileUrl) URL.revokeObjectURL(fileUrl)
+                  setFileUrl(URL.createObjectURL(f))
+                  setMatchedImage('')
+                  setResults([])
+                  setCaptured(true)
+                  setMessage('Matching uploaded fingerprint…')
+                  await startMatching(f)
+                }
+              }} />
+            </div>
+          )}
         </div>
         <div className="space-y-4">
               <div className="rounded-lg border border-base-300 bg-base-200/60 p-4">
@@ -288,10 +323,7 @@ export default function Scanner() {
                   <div className="text-xs text-base-content/60">{Math.round(matchProgress)}% complete</div>
                 </div>
                 <progress className="progress progress-info w-full" value={matchProgress} max="100" />
-                <div className="mt-2 flex items-center justify-between text-xs">
-                  <span className="text-base-content/60">{t('scanner.minCert')}: {minCert}%</span>
-                  <input type="range" min={0} max={100} value={minCert} onChange={(e)=>setMinCert(Number(e.target.value))} className="range range-primary range-xs w-40" />
-                </div>
+                
                 
               </div>
 
@@ -310,7 +342,7 @@ export default function Scanner() {
                         <td colSpan={3} className="text-base-content/60">{t('common.awaitingResults')}</td>
                       </tr>
                     )}
-                    {results.filter((r)=> r.score >= minCert).map((r) => (
+                    {results.map((r) => (
                       <tr key={r.id} className="hover">
                         <td>
                           <input
@@ -440,35 +472,4 @@ function FingerprintPreview({ seed, width = 160, height = 200 }) {
   )
 }
 
-function base64ToBlob(b64, mime = 'application/octet-stream') {
-  const bin = atob(b64)
-  const len = bin.length
-  const buf = new Uint8Array(len)
-  for (let i = 0; i < len; i++) buf[i] = bin.charCodeAt(i)
-  return new Blob([buf], { type: mime })
-}
-
-async function ensurePngFileFromBase64(b64, fmt, name) {
-  const lower = String(fmt || '').toLowerCase()
-  const blob = base64ToBlob(b64, `image/${lower || 'bmp'}`)
-  if (lower === 'png') return new File([blob], name || 'scan.png', { type: 'image/png' })
-  try {
-    const dataUrl = `data:${blob.type};base64,${b64}`
-    const img = await new Promise((resolve, reject) => {
-      const i = new Image()
-      i.onload = () => resolve(i)
-      i.onerror = reject
-      i.src = dataUrl
-    })
-    const canvas = document.createElement('canvas')
-    canvas.width = img.naturalWidth || img.width
-    canvas.height = img.naturalHeight || img.height
-    const ctx = canvas.getContext('2d')
-    ctx.drawImage(img, 0, 0)
-    const pngBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
-    const fname = (name && name.replace(/\.[^.]+$/, '')) || 'scan'
-    return new File([pngBlob], `${fname}.png`, { type: 'image/png' })
-  } catch {
-    return new File([blob], name || `scan.${lower || 'bmp'}`, { type: blob.type })
-  }
-}
+ 

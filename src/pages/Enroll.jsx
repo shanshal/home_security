@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, useMemo } from 'react'
 import { addScan, upsertUser } from '../lib/store.js'
-import { registerFingerprint } from '../lib/api.js'
+import { registerFingerprint, updateUser, uploadUserFingerprint } from '../lib/api.js'
 import { useToast } from '../components/Toaster.jsx'
 import Button from '../components/Button.jsx'
 import { useTranslation } from 'react-i18next'
+import { useWebSocket } from '../lib/useWebSocket.js'
+import { ensurePngFileFromBase64 } from '../lib/image.js'
 
 let lottiePromise = null
 const getLottie = async () => {
@@ -26,10 +28,14 @@ export default function Enroll() {
   const [userId, setUserId] = useState('')
   const [file, setFile] = useState(null)
   const [message, setMessage] = useState(t('enroll.msgConnect', 'Connect a scanner to enroll'))
+  const [wsImageSrc, setWsImageSrc] = useState('')
+  const [wsMeta, setWsMeta] = useState({ name: '', format: '', size: 0 })
   const REQUIRED = 3
   const timerRef = useRef(null)
   const lottieRef = useRef(null)
   const lottieInstance = useRef(null)
+  const SOCKET_URL = (import.meta?.env?.VITE_SOCKET_URL || `${location.protocol==='https:'?'wss':'ws'}://${location.hostname}:8765`)
+  const { status: wsStatus, lastMessage, error: wsError, reconnect: wsReconnect, ws } = useWebSocket(SOCKET_URL)
 
   useEffect(() => () => {
     if (timerRef.current) clearInterval(timerRef.current)
@@ -58,12 +64,13 @@ export default function Enroll() {
     return () => { cancelled = true }
   }, [scanning])
 
-  
+  useEffect(() => {
+    setConnected(wsStatus === 'open')
+    if (wsError) setMessage(String(wsError))
+  }, [wsStatus, wsError])
 
   const handleConnect = async () => {
-    setConnected(true)
-    setMessage(t('enroll.msgConnected', 'Scanner connected. Capture 3 samples to enroll.'))
-    notify(t('scanner.connected'), 'success')
+    wsReconnect()
   }
 
   const mulberry32 = (seed) => {
@@ -94,7 +101,14 @@ export default function Enroll() {
   }
 
   const captureSample = () => {
-    if (!connected || scanning) return
+    if (scanning) return
+    if (connected && ws && ws.readyState === 1) {
+      setScanning(true)
+      setProgress(0)
+      setMessage(t('enroll.msgCapturing', 'Capturing sample… Place finger on the scanner'))
+      try { ws.send('start') } catch {}
+      return
+    }
     setScanning(true)
     setMessage(t('enroll.msgCapturing', 'Capturing sample… Place finger on the scanner'))
     setProgress(0)
@@ -119,6 +133,75 @@ export default function Enroll() {
     }, 400)
   }
 
+  useEffect(() => {
+    if (!lastMessage) return
+    const raw = String(lastMessage || '')
+    const low = raw.trim().toLowerCase()
+    let payload = null
+    try { const p = JSON.parse(raw); if (p && typeof p === 'object') payload = p } catch {}
+    const statusRaw = String(payload?.status || '').trim()
+    const statusText = statusRaw.toLowerCase()
+
+    if (low.includes('device opened') || statusText.includes('device opened')) {
+      const mode = payload?.mode || payload?.data?.mode || 'Unknown'
+      setMessage(`Device opened (${mode})`)
+      return
+    }
+
+    if (low.includes('waiting for finger') || statusText.includes('waiting for finger')) {
+      setScanning(true)
+      setProgress(25)
+      setMessage('Waiting for finger…')
+      return
+    }
+
+    if (low.includes('captured') || statusText.includes('captured')) {
+      setScanning(false)
+      setProgress(60)
+      setMessage('Captured')
+      return
+    }
+
+    if (low.includes('image ready') || statusText.includes('image ready')) {
+      const img = payload?.data?.image ?? payload?.image
+      const fmt0 = payload?.data?.image_format ?? payload?.image_format
+      const fmt = String(fmt0 || '').toLowerCase() || 'bmp'
+      const name0 = payload?.data?.file_name ?? payload?.file_name ?? payload?.filename
+      const name = String(name0 || `scan.${fmt || 'bmp'}`)
+      const size = Number(payload?.data?.image_size ?? payload?.image_size ?? 0) || 0
+      if (img) {
+        setWsImageSrc(`data:image/${fmt};base64,${img}`)
+        setWsMeta({ name, format: fmt || 'bmp', size })
+        ;(async () => {
+          try {
+            const f = await ensurePngFileFromBase64(img, fmt, name)
+            setFile(f)
+            const sample = {
+              id: `${userId || 'new'}-enroll-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
+              at: new Date().toISOString().slice(0, 10),
+              device: 'OptiScan X2',
+              seed: Math.floor(Math.random() * 1e9),
+            }
+            setSamples((arr) => [...arr, sample])
+            setProgress(100)
+            setScanning(false)
+            setMessage(`Image ready (${name})`)
+            try { if (ws && ws.readyState === 1) ws.send('stop') } catch {}
+            notify(t('enroll.msgCaptured', 'Sample captured'), 'info')
+          } catch {}
+        })()
+      }
+      return
+    }
+
+    if (low.includes('error') || statusText.includes('error')) {
+      const err = payload?.error || payload?.data?.error || 'Unknown error'
+      setScanning(false)
+      setMessage(`Error - ${err}`)
+      return
+    }
+  }, [lastMessage])
+
   const removeSample = (idx) => {
     setSamples((arr) => arr.filter((_, i) => i !== idx))
   }
@@ -130,7 +213,21 @@ export default function Enroll() {
 
     try {
       if (file) {
-        await registerFingerprint({ file, username: id, fullName })
+        const isNumericId = /^\d+$/.test(id)
+        if (isNumericId) {
+          try { await updateUser({ id, username: null, fullName }) } catch {}
+          try {
+            await uploadUserFingerprint({ userId: id, file })
+          } catch (e) {
+            if (e?.status === 404) {
+              await registerFingerprint({ file, username: id, fullName })
+            } else {
+              throw e
+            }
+          }
+        } else {
+          await registerFingerprint({ file, username: id, fullName })
+        }
       } else {
         const user = upsertUser({ id, name: fullName, enrolled: true })
         samples.forEach((s) => addScan(user.id, s))
@@ -195,8 +292,24 @@ export default function Enroll() {
 
           <div className="flex flex-col items-center gap-4">
             <div className="aspect-[3/4] w-64 md:w-72 rounded-lg border border-base-300 bg-base-200/60 overflow-hidden relative">
-              <div ref={lottieRef} className={`absolute inset-0 ${scanning ? 'opacity-100' : 'opacity-60'} transition-opacity`} />
+              <div ref={lottieRef} className={`absolute inset-0 ${scanning ? 'opacity-100' : 'opacity-0'} transition-opacity`} />
+              {!scanning && (
+                <div className="absolute inset-0 flex items-center justify-center text-base-content/50 text-sm">
+                  {wsImageSrc ? (
+                    <img src={wsImageSrc} alt="captured" className="h-full w-full object-contain" />
+                  ) : 'Scanner preview'}
+                </div>
+              )}
             </div>
+            {wsImageSrc && (
+              <div className="mt-2 w-full text-xs text-base-content/70">
+                <div className="flex items-center gap-3">
+                  <span className="badge badge-ghost">{wsMeta.name || 'image'}</span>
+                  <span className="badge badge-ghost">{wsMeta.format || 'png'}</span>
+                  {wsMeta.size ? <span className="badge badge-ghost">{wsMeta.size} bytes</span> : null}
+                </div>
+              </div>
+            )}
             <div className="text-xs text-base-content/60 text-center">{t('enroll.livePreview', 'Live preview during capture')}</div>
           </div>
         </div>

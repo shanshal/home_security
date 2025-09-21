@@ -110,3 +110,24 @@ Notes
 ## Security API Base
 - Security API helpers use `VITE_SECURITY_API_BASE` (default `http://matching-api.yousified.xyz`).
 - For HTTPS deployments, avoid mixed content by setting `VITE_SECURITY_API_BASE` to an HTTPS origin or proxying via the app domain.
+
+## Styling & UI Patterns
+- Base styling uses Tailwind + DaisyUI components. Prefer DaisyUI primitives for structure and state: `card`, `badge`, `steps`, `alert`, `btn`, `input`, `progress`, `range`, `menu`, `drawer`.
+- Containers
+  - Cards: `card bg-base-100 border border-base-300` for panels; use `bg-base-200/60` for subtle surfaces inside cards.
+  - Layouts target `max-w-5xl|6xl mx-auto px-4 py-6` for page content.
+- Controls
+  - Buttons: `btn`, with variants `btn-primary`, `btn-secondary`, `btn-ghost`. Grouped toggles use `join` + `join-item`.
+  - Inputs: `input input-bordered`; file uploads: `file-input file-input-bordered`.
+  - Sliders: `range range-primary range-xs`; progress: `progress progress-info|progress-primary`.
+- Status & feedback
+  - Badges: `badge` + semantic variants (`badge-success`, `badge-warning`, `badge-error`, `badge-ghost`).
+  - Step indicators: `steps` + `step`, using `step-primary` (completed) and `step-secondary` (in‑progress) as needed.
+  - Alerts and toasts: `alert alert-{type}` inside a custom `ToastProvider` to stack toasts in `.toast.toast-end`.
+- Imagery & preview
+  - Previews use `object-contain` within fixed aspect containers (e.g., `aspect-[3/4] w-64`) and `overflow-hidden`.
+  - Prefer data URLs for transient images; ensure large previews are scrollable or fit via `max-h-*`.
+- Color tokens
+  - Use DaisyUI base tokens: `bg-base-100`, `bg-base-200/60`, `text-base-content/70`, and borders `border-base-300` for consistent themes.
+- i18n text
+  - Wrap user‑visible strings with `t('key')` and keep helper text in the `common` namespace where practical.
