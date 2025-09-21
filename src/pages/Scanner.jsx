@@ -30,6 +30,9 @@ export default function Scanner() {
   const [matchedImage, setMatchedImage] = useState('')
   const [wsImageSrc, setWsImageSrc] = useState('')
   const [wsMeta, setWsMeta] = useState({ name: '', format: '', size: 0 })
+  const [locked, setLocked] = useState(false)
+  const acceptTimer = useRef(null)
+  const bestRef = useRef(null)
   const lottieRef = useRef(null)
   const lottieInstance = useRef(null)
   const SOCKET_URL = 'ws://100.103.61.128:8765'
@@ -42,6 +45,9 @@ export default function Scanner() {
         lottieInstance.current.destroy()
         lottieInstance.current = null
       }
+      if (acceptTimer.current) clearTimeout(acceptTimer.current)
+      acceptTimer.current = null
+      bestRef.current = null
     }
   }, [])
 
@@ -50,12 +56,12 @@ export default function Scanner() {
   }, [wsStatus])
 
   useEffect(() => {
-    if (wsStatus !== 'open') return
+    if (wsStatus !== 'open' || locked) return
     setScanning(true)
     setMessage('Starting scan…')
     const msg = 'start'
     try { if (ws && ws.readyState === 1) ws.send(msg) } catch {}
-  }, [wsStatus, ws])
+  }, [wsStatus, ws, locked])
 
   useEffect(() => {
     if (!lastMessage) return
@@ -73,6 +79,7 @@ export default function Scanner() {
     }
 
     if (low.includes('waiting for finger') || statusText.includes('waiting for finger')) {
+      if (locked) return
       const n = Number(payload?.scan_count || payload?.data?.scan_count || 0) || 0
       setScanning(true)
       setCaptured(false)
@@ -81,6 +88,7 @@ export default function Scanner() {
     }
 
     if (low.includes('captured') || statusText.includes('captured')) {
+      if (locked) return
       setCaptured(true)
       setScanning(false)
       const sz = Number(payload?.data?.image_size ?? payload?.image_size ?? 0) || 0
@@ -90,26 +98,41 @@ export default function Scanner() {
     }
 
     if (low.includes('image ready') || statusText.includes('image ready')) {
+      if (locked) return
       const img = payload?.data?.image ?? payload?.image
       const fmt0 = payload?.data?.image_format ?? payload?.image_format
       const fmt = String(fmt0 || '').toLowerCase() || 'bmp'
       const name0 = payload?.data?.file_name ?? payload?.file_name ?? payload?.filename
       const name = String(name0 || `scan.${fmt || 'bmp'}`)
       const size = Number(payload?.data?.image_size ?? payload?.image_size ?? 0) || 0
-      if (img) setWsImageSrc(`data:image/${fmt};base64,${img}`)
-      if (img) setMatchedImage(`data:image/${fmt};base64,${img}`)
-      setWsMeta({ name, format: fmt || 'bmp', size })
-      setMessage(`Image ready (${name})`)
       if (img) {
-        try {
-          const blob = base64ToBlob(img, `image/${fmt || 'bmp'}`)
-          const f = new File([blob], name, { type: `image/${fmt || 'bmp'}` })
-          setFile(f)
-          setCaptured(true)
-          setScanning(false)
-          setScanProgress(100)
-          startMatching()
-        } catch {}
+        // show live preview while buffering best candidate
+        setWsImageSrc(`data:image/${fmt};base64,${img}`)
+        setWsMeta({ name, format: fmt || 'bmp', size })
+        if (!acceptTimer.current) {
+          bestRef.current = { img, fmt, name, size }
+          acceptTimer.current = setTimeout(async () => {
+            const c = bestRef.current
+            acceptTimer.current = null
+            bestRef.current = null
+            if (!c) return
+            try {
+              const f = await ensurePngFileFromBase64(c.img, c.fmt, c.name)
+              setFile(f)
+              setMatchedImage(`data:image/${c.fmt};base64,${c.img}`)
+              setCaptured(true)
+              setScanning(false)
+              setScanProgress(100)
+              setLocked(true)
+              setMessage(`Image ready (${c.name})`)
+              try { if (ws && ws.readyState === 1) ws.send('stop') } catch {}
+              startMatching(f)
+            } catch {}
+          }, 800)
+        } else {
+          const b = bestRef.current
+          if (!b || size > (b.size || 0)) bestRef.current = { img, fmt, name, size }
+        }
       }
       return
     }
@@ -155,19 +178,43 @@ export default function Scanner() {
     return () => {}
   }, [file])
 
-  const startMatching = async () => {
-    if (!file) return
+  const startMatching = async (fileArg = null) => {
+    const useFile = fileArg || file
+    if (!useFile) return
     setMatching(true)
     setMatchProgress(0)
     setMessage(t('scanner.msgMatching', 'Matching captured fingerprint against database…'))
     setResults([])
     try {
-      const res = await matchFingerprint({ file })
-      const scoreRaw = Number(res?.certainty ?? res?.score ?? 0)
-      const pct = scoreRaw <= 1 ? Math.round(scoreRaw * 100) : Math.round(scoreRaw)
-      const id = res?.user?.username || String(res?.user?.id || 'Unknown')
-      setMatchedImage(res?.image || '')
-      setResults([{ id, score: Math.max(0, Math.min(100, pct)) }])
+      const res = await matchFingerprint({ file: useFile })
+      const toPct = (v) => {
+        const n = Number(v)
+        if (!Number.isFinite(n)) return 0
+        return Math.max(0, Math.min(100, n <= 1 ? Math.round(n * 100) : Math.round(n)))
+      }
+      const toId = (o) => String(o?.user?.username ?? o?.user?.id ?? o?.id ?? o?.username ?? o?.name ?? 'Unknown')
+      const img = res?.image ?? res?.preview ?? res?.reference?.image ?? ''
+      if (img) setMatchedImage(img)
+
+      const arr = Array.isArray(res)
+        ? res
+        : (Array.isArray(res?.results)
+            ? res.results
+            : (Array.isArray(res?.matches)
+                ? res.matches
+                : (Array.isArray(res?.candidates)
+                    ? res.candidates
+                    : null)))
+
+      if (arr) {
+        const mapped = arr.map((e) => ({ id: toId(e), score: toPct(e?.certainty ?? e?.score ?? e?.similarity ?? e?.confidence) }))
+        mapped.sort((a, b) => b.score - a.score)
+        setResults(mapped)
+      } else {
+        const id = toId(res)
+        const score = toPct(res?.certainty ?? res?.score ?? res?.similarity ?? res?.confidence ?? (res?.matched === true ? 100 : 0))
+        setResults([{ id, score }])
+      }
       setMatchProgress(100)
       setMessage(t('scanner.msgMatchDone', 'Matching complete. Review top candidates by certainty.'))
     } catch (e) {
@@ -327,6 +374,21 @@ export default function Scanner() {
             <Button variant="secondary" onClick={wsReconnect} disabled={wsStatus==='open' || wsStatus==='connecting'} className="min-w-28">
               {wsStatus==='open' ? t('scanner.connected') : t('scanner.connect')}
             </Button>
+            <Button onClick={() => {
+              setLocked(false)
+              setWsImageSrc('')
+              setMatchedImage('')
+              setFile(null)
+              setFileUrl('')
+              setResults([])
+              setCaptured(false)
+              setMatchProgress(0)
+              setMessage('Starting scan…')
+              try { if (ws && ws.readyState === 1) ws.send('start') } catch {}
+              setScanning(true)
+            }} disabled={wsStatus!=='open'} className="min-w-28">
+              New Scan
+            </Button>
           </div>
 
           
@@ -384,4 +446,29 @@ function base64ToBlob(b64, mime = 'application/octet-stream') {
   const buf = new Uint8Array(len)
   for (let i = 0; i < len; i++) buf[i] = bin.charCodeAt(i)
   return new Blob([buf], { type: mime })
+}
+
+async function ensurePngFileFromBase64(b64, fmt, name) {
+  const lower = String(fmt || '').toLowerCase()
+  const blob = base64ToBlob(b64, `image/${lower || 'bmp'}`)
+  if (lower === 'png') return new File([blob], name || 'scan.png', { type: 'image/png' })
+  try {
+    const dataUrl = `data:${blob.type};base64,${b64}`
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image()
+      i.onload = () => resolve(i)
+      i.onerror = reject
+      i.src = dataUrl
+    })
+    const canvas = document.createElement('canvas')
+    canvas.width = img.naturalWidth || img.width
+    canvas.height = img.naturalHeight || img.height
+    const ctx = canvas.getContext('2d')
+    ctx.drawImage(img, 0, 0)
+    const pngBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
+    const fname = (name && name.replace(/\.[^.]+$/, '')) || 'scan'
+    return new File([pngBlob], `${fname}.png`, { type: 'image/png' })
+  } catch {
+    return new File([blob], name || `scan.${lower || 'bmp'}`, { type: blob.type })
+  }
 }
