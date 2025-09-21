@@ -32,11 +32,8 @@ export default function Scanner() {
   const [wsMeta, setWsMeta] = useState({ name: '', format: '', size: 0 })
   const lottieRef = useRef(null)
   const lottieInstance = useRef(null)
-  const SOCKET_URL = useMemo(() => {
-    const s = (import.meta?.env?.VITE_SOCKET_URL || 'ws://100.103.61.128:8765').trim()
-    return /^wss?:\/\//i.test(s) ? s : `ws://${s}`
-  }, [])
-  const { status: wsStatus, lastMessage, error: wsError, reconnect: wsReconnect } = useWebSocket(SOCKET_URL)
+  const SOCKET_URL = 'ws://100.103.61.128:8765'
+  const { status: wsStatus, lastMessage, error: wsError, reconnect: wsReconnect, ws } = useWebSocket(SOCKET_URL)
   
 
   useEffect(() => {
@@ -53,32 +50,60 @@ export default function Scanner() {
   }, [wsStatus])
 
   useEffect(() => {
+    if (wsStatus !== 'open') return
+    setScanning(true)
+    setMessage('Starting scan…')
+    const msg = 'start'
+    try { if (ws && ws.readyState === 1) ws.send(msg) } catch {}
+  }, [wsStatus, ws])
+
+  useEffect(() => {
     if (!lastMessage) return
     const raw = String(lastMessage || '')
     const low = raw.trim().toLowerCase()
     let payload = null
     try { const p = JSON.parse(raw); if (p && typeof p === 'object') payload = p } catch {}
-    if (low.includes('device opened') || String(payload?.status || '').toLowerCase().includes('device opened')) {
-      setMessage('Device opened')
+    const statusRaw = String(payload?.status || '').trim()
+    const statusText = statusRaw.toLowerCase()
+
+    if (low.includes('device opened') || statusText.includes('device opened')) {
+      const mode = payload?.mode || payload?.data?.mode || 'Unknown'
+      setMessage(`Device opened (${mode})`)
+      return
     }
-    if (low.includes('captured') || String(payload?.status || '').toLowerCase().includes('captured')) {
+
+    if (low.includes('waiting for finger') || statusText.includes('waiting for finger')) {
+      const n = Number(payload?.scan_count || payload?.data?.scan_count || 0) || 0
+      setScanning(true)
+      setCaptured(false)
+      setMessage(`Waiting for finger${n ? ` (Scan #${n})` : ''}`)
+      return
+    }
+
+    if (low.includes('captured') || statusText.includes('captured')) {
       setCaptured(true)
       setScanning(false)
-      setMessage('Captured')
+      const sz = Number(payload?.data?.image_size ?? payload?.image_size ?? 0) || 0
+      if (sz) setWsMeta((m) => ({ ...m, size: sz }))
+      setMessage(`Captured${sz ? ` (${sz} bytes)` : ''}`)
+      return
     }
-    if (low.includes('image ready') || String(payload?.status || '').toLowerCase().includes('image ready')) {
-      const img = payload?.data?.image
-      const fmt = String(payload?.data?.image_format || '').toLowerCase() || 'png'
-      const name = String(payload?.data?.file_name || `scan.${fmt || 'png'}`)
-      const size = Number(payload?.data?.image_size || 0) || 0
+
+    if (low.includes('image ready') || statusText.includes('image ready')) {
+      const img = payload?.data?.image ?? payload?.image
+      const fmt0 = payload?.data?.image_format ?? payload?.image_format
+      const fmt = String(fmt0 || '').toLowerCase() || 'bmp'
+      const name0 = payload?.data?.file_name ?? payload?.file_name ?? payload?.filename
+      const name = String(name0 || `scan.${fmt || 'bmp'}`)
+      const size = Number(payload?.data?.image_size ?? payload?.image_size ?? 0) || 0
       if (img) setWsImageSrc(`data:image/${fmt};base64,${img}`)
       if (img) setMatchedImage(`data:image/${fmt};base64,${img}`)
-      setWsMeta({ name, format: fmt || 'png', size })
-      setMessage('Image ready')
+      setWsMeta({ name, format: fmt || 'bmp', size })
+      setMessage(`Image ready (${name})`)
       if (img) {
         try {
-          const blob = base64ToBlob(img, `image/${fmt || 'png'}`)
-          const f = new File([blob], name, { type: `image/${fmt || 'png'}` })
+          const blob = base64ToBlob(img, `image/${fmt || 'bmp'}`)
+          const f = new File([blob], name, { type: `image/${fmt || 'bmp'}` })
           setFile(f)
           setCaptured(true)
           setScanning(false)
@@ -86,6 +111,14 @@ export default function Scanner() {
           startMatching()
         } catch {}
       }
+      return
+    }
+
+    if (low.includes('error') || statusText.includes('error')) {
+      const err = payload?.error || payload?.data?.error || 'Unknown error'
+      setScanning(false)
+      setMessage(`Error - ${err}`)
+      return
     }
   }, [lastMessage])
 
@@ -144,16 +177,7 @@ export default function Scanner() {
     }
   }
 
-  const handleStart = () => {}
-
-  const handleCancel = () => {
-    setScanning(false)
-    setMatching(false)
-    setScanProgress(0)
-    setMatchProgress(0)
-    setResults([])
-    setMessage(t('scanner.msgCanceled', 'Scan canceled'))
-  }
+  
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
